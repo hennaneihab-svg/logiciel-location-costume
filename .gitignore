@@ -1,0 +1,42 @@
+﻿# Dependencies
+node_modules
+/.pnp
+.pnp.js
+
+# Build outputs
+dist
+dist-ssr
+*.local
+
+# Rust / Tauri
+src-tauri/target
+target
+
+# SQLite databases & temp files
+*.db
+*.db-wal
+*.db-shm
+*.tmp
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment
+.env
+.env.production
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+screenshot_*.png
+screenshot_*.cjs
+
+*.pdb

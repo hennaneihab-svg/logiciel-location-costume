@@ -1,0 +1,48 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Atelier Prestige",
+  "version": "1.0.0",
+  "identifier": "com.atelierprestige.gestion",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Atelier Prestige — Gestion de Location Costumes & Cérémonie",
+        "width": 1366,
+        "height": 840,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "Gestion de location de costumes et chaussures d'événement",
+    "longDescription": "Application desktop de gestion intégrale pour boutique de location de costumes et chaussures d'événement : stock, clients, contrats, alertes, caisse, statistiques et sauvegardes.",
+    "copyright": "Copyright © 2026 Atelier Prestige",
+    "publisher": "Atelier Prestige SARL",
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    }
+  }
+}
