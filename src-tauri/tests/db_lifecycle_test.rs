@@ -12,6 +12,16 @@ async fn test_persistence_across_db_reconnect() {
     // 2. Insérer une donnée de test persistante
     let test_ref = "CI-TEST-PERSIST-001";
     let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO categories (id, nom, type, description, created_at)
+         VALUES ('cat-costume', 'Costumes Test CI', 'costume', 'Catégorie de test pour CI', ?)"
+    )
+    .bind(&now)
+    .execute(&pool1)
+    .await
+    .expect("Failed to insert test category in pool 1");
+
     sqlx::query(
         "INSERT INTO articles (
             id, categorie_id, fournisseur_id, reference, nom, marque, couleur,
@@ -66,6 +76,16 @@ async fn test_backup_and_restore_cycle_with_pool_reconnect() {
     // 1. Insérer la donnée A
     let ref_a = "CI-TEST-BACKUP-A";
     let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO categories (id, nom, type, description, created_at)
+         VALUES ('cat-costume', 'Costumes Test CI', 'costume', 'Catégorie de test pour CI', ?)"
+    )
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Failed to insert test category");
+
     sqlx::query(
         "INSERT INTO articles (
             id, categorie_id, fournisseur_id, reference, nom, marque, couleur,
