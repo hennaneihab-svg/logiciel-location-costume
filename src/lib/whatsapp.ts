@@ -3,6 +3,7 @@
  * Atelier Prestige — Solution 100% autonome sans API payante.
  */
 
+import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { isTauri } from "@/services/tauri";
 
 /**
@@ -89,16 +90,8 @@ export async function ouvrirWhatsApp(rawPhone: string, message?: string): Promis
 
   try {
     if (isTauri()) {
-      try {
-        // Tente d'utiliser le plugin shell si disponible
-        const shellPlugin = await import("@tauri-apps/plugin-shell");
-        if (shellPlugin && typeof shellPlugin.open === "function") {
-          await shellPlugin.open(link);
-          return { success: true };
-        }
-      } catch (pluginErr) {
-        console.warn("[WhatsApp] Plugin shell non disponible, utilisation du fallback navigateur :", pluginErr);
-      }
+      await openUrl(link);
+      return { success: true };
     }
 
     // Fallback environnement Web / Dev / Navigateur par défaut
