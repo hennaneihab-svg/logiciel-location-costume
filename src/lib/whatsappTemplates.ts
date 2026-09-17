@@ -14,7 +14,7 @@ export const WHATSAPP_TEMPLATES = {
       corps = `Nous vous rappelons que la restitution de votre tenue "${articleNom}" est prévue pour le ${dateRetour}.\nNous vous attendons en boutique pour la vérification et la clôture de votre contrat.`;
     }
 
-    return `${salutation}\n\n${corps}\n\nPour toute question, nous restons à votre entière disposition.\n\nCordialement,\nL'équipe Atelier Prestige ✨`;
+    return `${salutation}\n\n${corps}\n\nPour toute question, nous restons à votre entière disposition.\n\nCordialement,\nL'équipe Atelier Prestige`;
   },
 
   CONFIRMATION_RESERVATION: (clientNom: string, articleNom: string, dateRetrait: string, dateRetour?: string): string => {
@@ -22,7 +22,7 @@ export const WHATSAPP_TEMPLATES = {
     const retourInfo = dateRetour ? `\n- Date de retour prévue : ${dateRetour}` : "";
     const corps = `Votre réservation pour "${articleNom}" a bien été enregistrée chez Atelier Prestige.\n\nRécapitulatif :\n- Retrait prévu : ${dateRetrait}${retourInfo}\n\nNous préparons soigneusement votre tenue pour la date convenue. N'hésitez pas à nous contacter si vous avez la moindre modification à apporter.`;
 
-    return `${salutation}\n\n${corps}\n\nÀ très bientôt en boutique !\n\nCordialement,\nL'équipe Atelier Prestige ✨`;
+    return `${salutation}\n\n${corps}\n\nÀ très bientôt en boutique !\n\nCordialement,\nL'équipe Atelier Prestige`;
   },
 
   CONTACT_LIBRE: (clientNom?: string): string => {

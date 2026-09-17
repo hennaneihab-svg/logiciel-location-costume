@@ -237,7 +237,7 @@ export const ClientDetailModal: React.FC = () => {
               </div>
               <p className="text-[10px] text-muted-foreground mt-0.5">
                 {loyal
-                  ? "⭐ Statut Client Fidèle actif (> 5)"
+                  ? "Statut Client Fidèle actif (> 5)"
                   : `${5 - rentalsCount} location(s) avant statut Fidèle`}
               </p>
             </div>

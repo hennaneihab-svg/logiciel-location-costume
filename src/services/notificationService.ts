@@ -82,15 +82,15 @@ export async function notifyUrgentAlert(
 ): Promise<void> {
   const messages: Record<string, { title: string; body: string }> = {
     retard_retour: {
-      title: "🔴 Retard de retour !",
+      title: "Retard de retour",
       body: `${customerName} — ${articleName} (${contractNumber}) n'a pas été restitué.`,
     },
     retour_jour_j: {
-      title: "🟠 Retour attendu aujourd'hui",
+      title: "Retour attendu aujourd'hui",
       body: `${customerName} doit rendre ${articleName} (${contractNumber}) avant 19h.`,
     },
     retour_j1: {
-      title: "⚠️ Rappel J-1",
+      title: "Rappel J-1",
       body: `${customerName} — ${articleName} (${contractNumber}) retour prévu demain.`,
     },
   };

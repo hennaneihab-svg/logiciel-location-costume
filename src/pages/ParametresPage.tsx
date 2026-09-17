@@ -159,8 +159,8 @@ export const ParametresPage: React.FC = () => {
       {/* En-tête */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-foreground">
-            Module I — Administration & Paramètres
+          <h2 className="text-xl font-semibold tracking-tight text-foreground">
+            Configuration &amp; Paramètres
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
             Coordonnées de l'établissement, formats de numérotation, sauvegardes horodatées et journal d'audit
@@ -168,13 +168,13 @@ export const ParametresPage: React.FC = () => {
         </div>
 
         {/* Navigation Onglets */}
-        <div className="flex items-center bg-secondary/50 p-1 rounded-xl border border-border">
+        <div className="flex items-center bg-muted/50 p-1 rounded-md border border-border">
           <button
             type="button"
             onClick={() => setActiveTab("etablissement")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
               activeTab === "etablissement"
-                ? "bg-card text-foreground shadow-sm"
+                ? "bg-background text-foreground shadow-sm font-semibold"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -185,28 +185,28 @@ export const ParametresPage: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab("numerotation")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
               activeTab === "numerotation"
-                ? "bg-card text-foreground shadow-sm"
+                ? "bg-background text-foreground shadow-sm font-semibold"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
             <Hash className="w-3.5 h-3.5" />
-            <span>Numérotation & TVA</span>
+            <span>Numérotation &amp; TVA</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab("sauvegardes")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
               activeTab === "sauvegardes"
-                ? "bg-card text-foreground shadow-sm"
+                ? "bg-background text-foreground shadow-sm font-semibold"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
             <HardDriveDownload className="w-3.5 h-3.5" />
-            <span>Sauvegardes (30 j)</span>
-            <span className="w-4 h-4 rounded-full bg-primary/20 text-primary text-[10px] font-bold flex items-center justify-center">
+            <span>Sauvegardes</span>
+            <span className="w-4 h-4 rounded-full bg-muted text-foreground text-[10px] font-bold flex items-center justify-center border border-border">
               {backups.length}
             </span>
           </button>
@@ -214,14 +214,14 @@ export const ParametresPage: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab("audit")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
               activeTab === "audit"
-                ? "bg-card text-foreground shadow-sm"
+                ? "bg-background text-foreground shadow-sm font-semibold"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Journal d'Audit</span>
+            <span>Journal d'audit</span>
           </button>
         </div>
       </div>

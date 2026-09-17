@@ -86,7 +86,7 @@ export const CaisseCart: React.FC<CaisseCartProps> = ({ onCheckout }) => {
           }}
           className="w-full h-8 px-2.5 text-xs rounded-lg bg-secondary/50 border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
         >
-          <option value="">👤 Client Comptoir (Anonyme)</option>
+          <option value="">Client Comptoir (Vente directe)</option>
           {clients.map((c) => (
             <option key={c.id} value={c.id}>
               {c.first_name} {c.last_name} ({c.phone})

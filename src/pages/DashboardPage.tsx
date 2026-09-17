@@ -14,7 +14,6 @@ import { motion } from "framer-motion";
 import {
   Plus,
   RefreshCw,
-  Sparkles,
 } from "lucide-react";
 import { PeriodSelector } from "@/components/dashboard/PeriodSelector";
 import { KpiCardsSection } from "@/components/dashboard/KpiCardsSection";
@@ -88,24 +87,18 @@ export const DashboardPage: React.FC = () => {
       {/* ── 1. En-tête Page avec Sélecteur de Période & Boutons d'Action ── */}
       <motion.div
         variants={fadeInUp}
-        className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4"
+        className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
       >
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold tracking-tight text-foreground">
-              Tableau de Bord &amp; Pilotage Boutique
-            </h2>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20 flex items-center gap-1">
-              <Sparkles className="w-3 h-3 fill-current" />
-              Live
-            </span>
-          </div>
+          <h2 className="text-xl font-semibold tracking-tight text-foreground">
+            Tableau de Bord
+          </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Analyse du chiffre d'affaires, rotation du stock et flux opérationnels
+            Indicateurs d'activité, rotation du stock et flux opérationnels
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Sélecteur de Période */}
           <PeriodSelector
             period={period}
@@ -119,16 +112,16 @@ export const DashboardPage: React.FC = () => {
           <button
             type="button"
             onClick={loadData}
-            title="Rafraîchir les statistiques"
-            className="p-2 rounded-xl border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-all"
+            title="Rafraîchir les données"
+            className="w-8 h-8 rounded-md border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin text-primary" : ""}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-foreground" : ""}`} />
           </button>
 
           <button
             type="button"
             onClick={() => setCreateRentalModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-all shadow-sm shadow-primary/20"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Nouvelle Location</span>

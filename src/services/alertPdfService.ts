@@ -251,7 +251,7 @@ export async function generateAlertsPdf(
     y -= 13;
     const details: string[] = [];
     if (alert.customer_name) details.push(`Client : ${alert.customer_name}`);
-    if (alert.customer_phone) details.push(`📞 ${alert.customer_phone}`);
+    if (alert.customer_phone) details.push(`Tél : ${alert.customer_phone}`);
     if (alert.contract_number) details.push(`Contrat : ${alert.contract_number}`);
     if (alert.days_overdue !== undefined && alert.days_overdue > 0)
       details.push(`Retard : ${alert.days_overdue}j`);
@@ -269,7 +269,7 @@ export async function generateAlertsPdf(
     // Acquittement
     if (alert.dismiss_comment) {
       y -= 13;
-      const dismissStr = `✓ Acquittée par ${alert.dismissed_by ?? "?"} le ${formatDate(alert.dismissed_at)} — "${alert.dismiss_comment}"`;
+      const dismissStr = `Acquittée par ${alert.dismissed_by ?? "?"} le ${formatDate(alert.dismissed_at)} — "${alert.dismiss_comment}"`;
       drawText(dismissStr, { size: 7, color: COLOR.acquittee, maxWidth: COL_WIDTH - 20, x: MARGIN + 10 });
     }
 

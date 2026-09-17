@@ -6,10 +6,8 @@ import {
   Eye,
   EyeOff,
   ShieldCheck,
-  Sparkles,
   ArrowRight,
   KeyRound,
-  Store,
 } from "lucide-react";
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -69,52 +67,48 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-background via-secondary/30 to-background p-4 relative overflow-hidden">
-      {/* Halo décoratif de fond */}
-      <div className="absolute -top-40 -left-40 w-96 h-96 bg-primary/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-primary/10 rounded-full blur-3xl pointer-events-none" />
-
+    <div className="min-h-screen w-full flex items-center justify-center bg-background p-4 relative">
       <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        className="w-full max-w-md bg-card border border-border rounded-3xl p-8 shadow-2xl relative z-10 space-y-6"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+        className="w-full max-w-sm bg-card border border-border rounded-xl p-6 shadow-sm space-y-6"
       >
         {/* Logo & Titre */}
-        <div className="text-center space-y-2">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary to-amber-600 text-primary-foreground flex items-center justify-center mx-auto shadow-lg shadow-primary/20">
-            <Store className="w-7 h-7" />
+        <div className="text-center space-y-1.5">
+          <div className="w-10 h-10 rounded-lg bg-foreground text-background flex items-center justify-center mx-auto font-bold text-sm tracking-wider">
+            AP
           </div>
-          <h1 className="text-2xl font-black tracking-tight text-foreground">
-            ATELIER PRESTIGE
+          <h1 className="text-lg font-semibold tracking-tight text-foreground uppercase">
+            Atelier Prestige
           </h1>
           <p className="text-xs text-muted-foreground">
-            Logiciel de Gestion • Cérémonie, Costumes & Chaussures
+            Logiciel de gestion • Costumes &amp; Cérémonie
           </p>
         </div>
 
         {/* Formulaire de Connexion */}
         <form onSubmit={handleLogin} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5 text-primary" />
-              <span>Identifiant utilisateur</span>
+            <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+              <User className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>Identifiant</span>
             </label>
             <input
               type="text"
               autoFocus
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="Ex: admin ou vendeur"
-              className="w-full h-10 px-3.5 rounded-xl border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+              placeholder="admin ou vendeur"
+              className="w-full h-9 px-3 rounded-md border border-border bg-background text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-foreground transition-all"
             />
           </div>
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5 text-primary" />
-                <span>Mot de passe (Bcrypt)</span>
+              <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-muted-foreground" />
+                <span>Mot de passe</span>
               </label>
             </div>
             <div className="relative">
@@ -123,20 +117,20 @@ export const LoginPage: React.FC = () => {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full h-10 pl-3.5 pr-10 rounded-xl border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary transition-all font-mono"
+                className="w-full h-9 pl-3 pr-9 rounded-md border border-border bg-background text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-foreground transition-all font-mono"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
               </button>
             </div>
           </div>
 
           {errorMsg && (
-            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 text-xs font-medium animate-in shake">
+            <div className="p-2.5 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-xs font-medium">
               {errorMsg}
             </div>
           )}
@@ -144,49 +138,45 @@ export const LoginPage: React.FC = () => {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full py-3 rounded-xl bg-primary text-primary-foreground font-bold text-sm hover:bg-primary/90 transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/25 disabled:opacity-50"
+            className="w-full py-2 rounded-md bg-foreground text-background font-medium text-xs hover:bg-foreground/90 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
           >
             <span>Se connecter</span>
-            <ArrowRight className="w-4 h-4" />
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </form>
 
         {/* Accès Démo Rapide */}
-        <div className="pt-4 border-t border-border space-y-2.5">
-          <div className="flex items-center justify-between text-[11px] text-muted-foreground font-medium">
-            <span className="flex items-center gap-1">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              Accès rapide démonstration :
-            </span>
-            <span className="text-[10px] text-primary font-mono">Bcrypt vérifié</span>
+        <div className="pt-4 border-t border-border space-y-2">
+          <div className="text-[11px] text-muted-foreground font-medium">
+            Accès rapide de démonstration :
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
               onClick={() => handleQuickLogin("admin")}
-              className="p-2.5 rounded-xl border border-primary/40 bg-primary/5 hover:bg-primary/10 text-left transition-all group"
+              className="p-2 rounded-md border border-border bg-muted/40 hover:bg-muted text-left transition-colors"
             >
-              <div className="text-xs font-bold text-foreground group-hover:text-primary flex items-center justify-between">
+              <div className="text-xs font-medium text-foreground flex items-center justify-between">
                 <span>Directeur</span>
-                <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground" />
               </div>
               <p className="text-[10px] text-muted-foreground mt-0.5">
-                Rôle Admin • Accès total
+                Admin (complet)
               </p>
             </button>
 
             <button
               type="button"
               onClick={() => handleQuickLogin("vendeur")}
-              className="p-2.5 rounded-xl border border-border bg-secondary/40 hover:bg-secondary text-left transition-all group"
+              className="p-2 rounded-md border border-border bg-muted/40 hover:bg-muted text-left transition-colors"
             >
-              <div className="text-xs font-bold text-foreground group-hover:text-primary flex items-center justify-between">
+              <div className="text-xs font-medium text-foreground flex items-center justify-between">
                 <span>Vendeuse</span>
                 <KeyRound className="w-3.5 h-3.5 text-muted-foreground" />
               </div>
               <p className="text-[10px] text-muted-foreground mt-0.5">
-                Rôle Vendeur • Restreint
+                Vendeur (restreint)
               </p>
             </button>
           </div>

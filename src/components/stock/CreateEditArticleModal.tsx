@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { X, Upload, Trash2, Plus, Sparkles, Image as ImageIcon } from "lucide-react";
+import { X, Upload, Trash2, Plus, Shirt, Image as ImageIcon } from "lucide-react";
 import { eurosToCents } from "@/lib/utils";
 import { useStockStore } from "@/store/stockStore";
 import type { StockArticle, StockVariant } from "@/types/stock";
@@ -141,7 +141,7 @@ export const CreateEditArticleModal: React.FC = () => {
         {/* Modal Header */}
         <div className="h-14 px-6 border-b border-border flex items-center justify-between bg-muted/40 shrink-0">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary" />
+            <Shirt className="w-4 h-4 text-primary" />
             <h3 className="font-bold text-sm text-foreground">
               Nouvel Article & Génération de Stock
             </h3>
@@ -444,7 +444,7 @@ export const CreateEditArticleModal: React.FC = () => {
               type="submit"
               className="px-5 py-2 rounded-lg text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm flex items-center gap-1.5"
             >
-              <Sparkles className="w-4 h-4" />
+              <Plus className="w-4 h-4" />
               <span>Enregistrer & Générer les Étiquettes QR</span>
             </button>
           </div>

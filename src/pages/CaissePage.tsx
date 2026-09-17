@@ -44,27 +44,27 @@ export const CaissePage: React.FC = () => {
       {/* 1. En-tête Page & Navigation Onglets */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-foreground">
-            Module F — Caisse & Vente Directe
+          <h2 className="text-xl font-semibold tracking-tight text-foreground">
+            Caisse &amp; Point de Vente
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Vente rapide d'accessoires, encaissement multi-moyens, rendu de monnaie et clôture journalière
+            Encaissement direct, gestion des règlements et clôture journalière
           </p>
         </div>
 
         {/* Onglets de Caisse */}
-        <div className="flex items-center bg-secondary/50 p-1 rounded-xl border border-border">
+        <div className="flex items-center bg-muted/50 p-1 rounded-md border border-border">
           <button
             type="button"
             onClick={() => setActiveTab("pos")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
               activeTab === "pos"
-                ? "bg-card text-foreground shadow-sm"
+                ? "bg-background text-foreground shadow-sm font-semibold"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
             <ShoppingCart className="w-3.5 h-3.5" />
-            <span>Vente & Panier</span>
+            <span>Vente &amp; Panier</span>
             {cart.length > 0 && (
               <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
                 {cart.length}

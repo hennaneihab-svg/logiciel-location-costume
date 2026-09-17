@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import QRCode from "qrcode";
-import { X, Printer, Sparkles, Tag } from "lucide-react";
+import { X, Printer, Tag } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { useStockStore } from "@/store/stockStore";
 
@@ -111,7 +111,7 @@ export const QrLabelModal: React.FC = () => {
               {/* Header étiquette */}
               <div className="w-full pb-2 border-b border-slate-300 flex items-center justify-between">
                 <div className="flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-600 fill-current" />
+                  <Tag className="w-3.5 h-3.5 text-slate-900" />
                   <span className="font-extrabold text-[11px] tracking-wider uppercase">
                     ATELIER PRESTIGE
                   </span>

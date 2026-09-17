@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { QrCode, X, Search, AlertCircle, Sparkles } from "lucide-react";
+import { QrCode, X, Search, AlertCircle, Tag } from "lucide-react";
 import { useStockStore } from "@/store/stockStore";
 import { useCaisseStore } from "@/store/caisseStore";
 import { toast } from "sonner";
@@ -166,7 +166,7 @@ export const ScanQrModal: React.FC<ScanQrModalProps> = ({ isOpen, onClose }) => 
             {/* Raccourcis de simulation de scan rapide */}
             <div className="space-y-2 pt-2 border-t border-border">
               <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                <Tag className="w-3.5 h-3.5 text-muted-foreground" />
                 <span>Codes d'articles prêts à scanner pour démo :</span>
               </div>
               <div className="grid grid-cols-2 gap-2">

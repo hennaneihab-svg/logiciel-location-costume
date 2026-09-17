@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Search, Sun, Moon, Bell, Clock } from "lucide-react";
+import { Search, Sun, Moon, Bell } from "lucide-react";
 import { useThemeStore } from "@/store/themeStore";
 import { UniversalSearchModal } from "@/components/search/UniversalSearchModal";
 import { useAlertStore } from "@/store/alertStore";
@@ -52,42 +52,44 @@ export const Topbar: React.FC = () => {
 
   return (
     <>
-      <header className="h-16 px-6 bg-card border-b border-border flex items-center justify-between shrink-0 select-none">
+      <header className="h-14 px-6 bg-card border-b border-border flex items-center justify-between shrink-0 select-none">
         {/* Universal Search Bar — cliquable → ouvre le modal */}
         <button
           type="button"
           onClick={() => setSearchOpen(true)}
-          className="relative w-96 max-w-md h-9 pl-9 pr-4 flex items-center text-xs rounded-lg bg-secondary/60 border border-border/80 text-muted-foreground/70 hover:border-primary/40 hover:bg-secondary transition-all cursor-text"
+          className="relative w-80 max-w-sm h-8 pl-8 pr-3 flex items-center text-xs rounded-md bg-muted/40 border border-border text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-colors cursor-text"
           aria-label="Ouvrir la recherche universelle"
         >
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-          <span className="flex-1 text-left">Recherche universelle (client, costume, contrat)...</span>
-          <kbd className="hidden sm:inline-flex text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-background border border-border text-muted-foreground pointer-events-none">
-            Ctrl + K
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+          <span className="flex-1 text-left truncate">Recherche universelle...</span>
+          <kbd className="hidden sm:inline-flex text-[10px] font-mono px-1.5 py-0.5 rounded bg-background border border-border text-muted-foreground pointer-events-none">
+            Ctrl+K
           </kbd>
         </button>
 
         {/* Right Controls: Clock + Theme Switch + Notifications */}
-        <div className="flex items-center gap-4">
-          {/* Horloge & Date en direct */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/40 border border-border/60 text-xs">
-            <Clock className="w-3.5 h-3.5 text-primary" />
-            <span className="capitalize text-muted-foreground">{dateStr}</span>
-            <span className="font-semibold text-foreground font-mono">{timeStr}</span>
+        <div className="flex items-center gap-3">
+          {/* Horloge & Date minimaliste */}
+          <div className="hidden md:flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="capitalize">{dateStr}</span>
+            <span className="text-border">•</span>
+            <span className="font-mono font-medium text-foreground">{timeStr}</span>
           </div>
+
+          <div className="h-4 w-[1px] bg-border hidden md:block" />
 
           {/* Bouton Thème Clair/Sombre */}
           <button
             type="button"
             onClick={toggleTheme}
             aria-label="Basculer le thème"
-            className="p-2 rounded-lg bg-secondary/60 border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            className="w-8 h-8 rounded-md border border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors"
             title={`Activer le mode ${theme === "dark" ? "clair" : "sombre"}`}
           >
             {theme === "dark" ? (
-              <Sun className="w-4 h-4 text-amber-400 hover:rotate-45 transition-transform duration-200" />
+              <Sun className="w-4 h-4 text-foreground" />
             ) : (
-              <Moon className="w-4 h-4 text-slate-700 hover:-rotate-12 transition-transform duration-200" />
+              <Moon className="w-4 h-4 text-foreground" />
             )}
           </button>
 
@@ -95,14 +97,14 @@ export const Topbar: React.FC = () => {
           <button
             type="button"
             aria-label="Notifications"
-            className="relative p-2 rounded-lg bg-secondary/60 border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            className="relative w-8 h-8 rounded-md border border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors"
             title={`${activeCount} alerte${activeCount > 1 ? "s" : ""} active${activeCount > 1 ? "s" : ""}`}
           >
             <Bell className="w-4 h-4" />
             {activeCount > 0 && (
               <span
-                className={`absolute top-1 right-1 w-2 h-2 rounded-full ring-2 ring-card ${
-                  criticalCount > 0 ? "bg-red-500 animate-pulse" : "bg-amber-500"
+                className={`absolute top-1.5 right-1.5 w-2 h-2 rounded-full ${
+                  criticalCount > 0 ? "bg-red-500" : "bg-primary"
                 }`}
               />
             )}

@@ -30,14 +30,26 @@ export const TopArticlesRanking: React.FC<TopArticlesRankingProps> = ({
   const getMedal = (index: number) => {
     switch (index) {
       case 0:
-        return <span className="text-base" title="1ère place">🥇</span>;
+        return (
+          <span className="w-5 h-5 rounded-md bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-[10px] font-bold text-amber-500" title="1ère place">
+            1
+          </span>
+        );
       case 1:
-        return <span className="text-base" title="2ème place">🥈</span>;
+        return (
+          <span className="w-5 h-5 rounded-md bg-slate-400/15 border border-slate-400/30 flex items-center justify-center text-[10px] font-bold text-slate-300" title="2ème place">
+            2
+          </span>
+        );
       case 2:
-        return <span className="text-base" title="3ème place">🥉</span>;
+        return (
+          <span className="w-5 h-5 rounded-md bg-amber-700/15 border border-amber-700/30 flex items-center justify-center text-[10px] font-bold text-amber-600" title="3ème place">
+            3
+          </span>
+        );
       default:
         return (
-          <span className="w-5 h-5 rounded-full bg-secondary flex items-center justify-center text-[10px] font-bold text-muted-foreground">
+          <span className="w-5 h-5 rounded-md bg-secondary border border-border flex items-center justify-center text-[10px] font-medium text-muted-foreground">
             {index + 1}
           </span>
         );

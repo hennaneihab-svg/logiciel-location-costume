@@ -4,7 +4,7 @@ import {
   DollarSign,
   Shirt,
   QrCode,
-  Sparkles,
+  RotateCcw,
   AlertTriangle,
   History,
   CheckCircle2,
@@ -216,7 +216,7 @@ export const ArticleDetailModal: React.FC = () => {
               <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-primary" />
+                    <RotateCcw className="w-3.5 h-3.5 text-primary" />
                     Boutons de Test : Simulation Temps Réel des Mouvements de Stock
                   </span>
                 </div>

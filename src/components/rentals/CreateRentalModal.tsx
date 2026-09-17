@@ -4,7 +4,7 @@ import {
   Search,
   UserPlus,
   AlertTriangle,
-  Sparkles,
+  FileText,
   ShoppingBag,
   CheckCircle2,
 } from "lucide-react";
@@ -187,7 +187,7 @@ export const CreateRentalModal: React.FC = () => {
         {/* Header Modal */}
         <div className="h-14 px-6 border-b border-border flex items-center justify-between bg-muted/40 shrink-0">
           <div className="flex items-center gap-2 font-bold text-sm text-foreground">
-            <Sparkles className="w-4 h-4 text-primary" />
+            <FileText className="w-4 h-4 text-primary" />
             <span>Nouveau Contrat de Location — Assistant de Réservation</span>
           </div>
           <button
@@ -255,12 +255,12 @@ export const CreateRentalModal: React.FC = () => {
                     </div>
 
                     {c.is_blacklisted ? (
-                      <span className="text-[10px] text-red-500 font-bold">
-                        🚫 Bloqué
+                      <span className="text-[10px] text-destructive font-bold">
+                        Bloqué
                       </span>
                     ) : c.rentals.length > 5 ? (
                       <span className="text-[10px] text-amber-500 font-bold">
-                        ⭐ Fidèle
+                        Fidèle
                       </span>
                     ) : null}
                   </div>
@@ -623,7 +623,7 @@ export const CreateRentalModal: React.FC = () => {
                   type="submit"
                   className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 shadow-md flex items-center justify-center gap-2 transition-all"
                 >
-                  <Sparkles className="w-4 h-4" />
+                  <CheckCircle2 className="w-4 h-4" />
                   <span>
                     Valider le Contrat & Générer le Bon PDF (2 exemplaires)
                   </span>

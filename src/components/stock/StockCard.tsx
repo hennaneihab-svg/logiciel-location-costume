@@ -99,8 +99,8 @@ export const StockCard: React.FC<StockCardProps> = ({ article }) => {
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      transition={{ duration: 0.25, ease: "easeOut" }}
-      className="group rounded-xl bg-card border border-border overflow-hidden shadow-sm hover:shadow-md hover:border-primary/40 transition-all flex flex-col justify-between"
+      transition={{ duration: 0.2, ease: "easeOut" }}
+      className="group rounded-xl bg-card border border-border overflow-hidden hover:border-border/80 transition-colors flex flex-col justify-between"
     >
       <div>
         {/* Photo Container */}

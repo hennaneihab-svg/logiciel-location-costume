@@ -85,7 +85,7 @@ export const UniversalSearchModal: React.FC<UniversalSearchModalProps> = ({ open
           path: "/clients",
           icon: Users,
           color: "text-blue-500",
-          meta: c.is_blacklisted ? "🚫 Blacklisté" : undefined,
+          meta: c.is_blacklisted ? "Blacklisté" : undefined,
         });
       }
     });

@@ -158,33 +158,40 @@ export const AlertesPage: React.FC = () => {
       {/* ── En-tête ──────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-            <BellRing className="w-5 h-5 text-primary" />
-            Alertes & Rappels
-            {criticalCount > 0 && (
-              <span className="ml-1 px-2 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-bold animate-pulse">
-                {criticalCount} CRITIQUE{criticalCount > 1 ? "S" : ""}
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-semibold tracking-tight text-foreground">
+              Centre d'Alertes &amp; Rappels
+            </h2>
+            {criticalCount > 0 ? (
+              <span className="px-2 py-0.5 rounded-md bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 text-[10px] font-bold">
+                {criticalCount} critique{criticalCount > 1 ? "s" : ""}
+              </span>
+            ) : (
+              <span className="px-2 py-0.5 rounded-md bg-muted text-muted-foreground border border-border text-[10px] font-mono">
+                {activeCount} active{activeCount > 1 ? "s" : ""}
               </span>
             )}
-          </h2>
+          </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Suivi des retards, rappels de retour et alertes de stock
+            Suivi des retards de restitution, alertes de stock et relances clients
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={resetFilters}
             title="Réinitialiser les filtres"
-            className="p-2 rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            className="w-8 h-8 rounded-md border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted flex items-center justify-center transition-colors"
           >
-            <RotateCcw className="w-4 h-4" />
+            <RotateCcw className="w-3.5 h-3.5" />
           </button>
           <button
+            type="button"
             onClick={openPdfExport}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-card text-xs font-medium text-foreground hover:bg-muted transition-colors"
           >
-            <FileDown className="w-4 h-4 text-primary" />
-            Exporter PDF
+            <FileDown className="w-3.5 h-3.5 text-muted-foreground" />
+            <span>Exporter PDF</span>
           </button>
         </div>
       </div>

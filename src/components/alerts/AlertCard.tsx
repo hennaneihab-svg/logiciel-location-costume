@@ -25,6 +25,8 @@ import {
   CheckCheck,
   ExternalLink,
   MessageCircle,
+  User,
+  Shirt,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn, formatCents, formatDate } from "@/lib/utils";
@@ -232,8 +234,8 @@ export const AlertCard: React.FC<AlertCardProps> = ({
               </span>
             )}
             {alert.status === "acquittee" && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-500/15 text-slate-400 border border-slate-500/25 font-semibold">
-                ✓ Acquittée
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-500/15 text-slate-400 border border-slate-500/25 font-semibold inline-flex items-center gap-1">
+                <CheckCircle2 className="w-2.5 h-2.5 text-slate-400" /> Acquittée
               </span>
             )}
             {alert.whatsapp_sent_at && (
@@ -254,8 +256,8 @@ export const AlertCard: React.FC<AlertCardProps> = ({
           {/* Tags contextuels */}
           <div className="flex flex-wrap items-center gap-2 mt-2">
             {alert.customer_name && (
-              <span className="text-[10px] px-2 py-0.5 rounded bg-secondary text-foreground font-medium">
-                👤 {alert.customer_name}
+              <span className="text-[10px] px-2 py-0.5 rounded bg-secondary text-foreground font-medium inline-flex items-center gap-1">
+                <User className="w-3 h-3 text-muted-foreground" /> {alert.customer_name}
               </span>
             )}
 
@@ -272,8 +274,9 @@ export const AlertCard: React.FC<AlertCardProps> = ({
             )}
 
             {alert.article_name && (
-              <span className="text-[10px] px-2 py-0.5 rounded bg-secondary text-muted-foreground truncate max-w-[200px]">
-                🧥 {alert.article_name}{alert.variant_size ? ` (T.${alert.variant_size})` : ""}
+              <span className="text-[10px] px-2 py-0.5 rounded bg-secondary text-muted-foreground truncate max-w-[200px] inline-flex items-center gap-1">
+                <Shirt className="w-3 h-3 text-muted-foreground shrink-0" />
+                <span className="truncate">{alert.article_name}{alert.variant_size ? ` (T.${alert.variant_size})` : ""}</span>
               </span>
             )}
 

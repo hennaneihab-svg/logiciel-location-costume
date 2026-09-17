@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { X, UserPlus, Upload, Trash2, CreditCard, Sparkles } from "lucide-react";
+import { X, UserPlus, Upload, Trash2, CreditCard } from "lucide-react";
 import { useClientStore } from "@/store/clientStore";
 import { toast } from "sonner";
 import type { CustomerDetailed } from "@/types/customer";
@@ -347,7 +347,7 @@ export const QuickCreateClientModal: React.FC<QuickCreateClientModalProps> = ({
               type="submit"
               className="px-5 py-2 rounded-lg text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm flex items-center gap-1.5"
             >
-              <Sparkles className="w-4 h-4" />
+              <UserPlus className="w-4 h-4" />
               <span>Créer et Enregistrer le Client</span>
             </button>
           </div>
