@@ -49,6 +49,14 @@ pub fn run() {
             // Paiements
             commands::list_paiements,
             commands::create_paiement,
+            // Caisse & Ventes directes
+            commands::create_direct_sale,
+            commands::list_direct_sales,
+            commands::open_cash_session,
+            commands::close_cash_session,
+            commands::get_active_cash_session,
+            commands::record_payment,
+            commands::list_payments,
             // Alertes
             commands::list_alertes,
             commands::traiter_alerte,

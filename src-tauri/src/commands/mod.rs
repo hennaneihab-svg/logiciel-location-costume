@@ -872,6 +872,37 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
             .execute(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?;
+
+            let active_session: Option<(String,)> = sqlx::query_as(
+                "SELECT id FROM sessions_caisse WHERE statut = 'ouverte' ORDER BY date_session DESC LIMIT 1"
+            )
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+            if let Some((ses_id,)) = active_session {
+                let col_name = match dto.payment_method.as_str() {
+                    "especes" => "total_especes_centimes",
+                    "carte_bancaire" => "total_carte_centimes",
+                    "cheque" => "total_cheque_centimes",
+                    "virement" => "total_virement_centimes",
+                    _ => "total_especes_centimes",
+                };
+                let update_sql = format!(
+                    "UPDATE sessions_caisse 
+                     SET total_locations_centimes = total_locations_centimes + ?,
+                         {} = {} + ?
+                     WHERE id = ?",
+                    col_name, col_name
+                );
+                sqlx::query(&update_sql)
+                    .bind(paid_cents)
+                    .bind(paid_cents)
+                    .bind(&ses_id)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+            }
         }
 
         Ok(location_id)
@@ -1243,6 +1274,686 @@ pub async fn create_paiement(dto: CreatePaiementDto, state: State<'_, DbState>) 
         .map_err(AppError::DatabaseError)?;
 
     Ok(paiement)
+}
+
+// ----------------------------------------------------------------------------
+// 5. BIS - MODULE CAISSE & VENTES DIRECTES (SQLITE)
+// ----------------------------------------------------------------------------
+
+pub async fn fetch_direct_sale_by_id(pool: &sqlx::SqlitePool, sale_id: &str) -> Result<DirectSaleDto, AppError> {
+    use sqlx::Row;
+
+    let row = sqlx::query(
+        "SELECT v.id, v.numero_vente, v.client_id, v.utilisateur_id, v.montant_total_centimes,
+                v.moyen_paiement, v.statut, v.notes, v.created_at,
+                c.nom as client_nom, c.prenom as client_prenom, c.telephone as client_tel,
+                u.nom_complet as user_name
+         FROM ventes v
+         LEFT JOIN clients c ON v.client_id = c.id
+         JOIN utilisateurs u ON v.utilisateur_id = u.id
+         WHERE v.id = ?"
+    )
+    .bind(sale_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::DatabaseError)?
+    .ok_or_else(|| AppError::NotFound(format!("Vente introuvable : {}", sale_id)))?;
+
+    let id: String = row.get("id");
+    let sale_number: String = row.get("numero_vente");
+    let customer_id: Option<String> = row.get("client_id");
+    let c_nom: Option<String> = row.get("client_nom");
+    let c_prenom: Option<String> = row.get("client_prenom");
+    let customer_phone: Option<String> = row.get("client_tel");
+    let customer_name = match (c_prenom, c_nom) {
+        (Some(p), Some(n)) => format!("{} {}", p, n),
+        _ => "Client Comptoir".to_string(),
+    };
+    let user_id: String = row.get("utilisateur_id");
+    let user_name: String = row.get("user_name");
+    let total_amount_cents: i64 = row.get("montant_total_centimes");
+    let moyen_paiement: String = row.get("moyen_paiement");
+    let notes: Option<String> = row.get("notes");
+    let created_at: String = row.get("created_at");
+
+    let tax_rate = 0.19;
+    let total_ht = (total_amount_cents as f64 / 1.19).round() as i64;
+    let tax_amount_cents = total_amount_cents - total_ht;
+
+    let line_rows = sqlx::query(
+        "SELECT lv.id, lv.article_id, lv.variante_id, lv.quantite, lv.prix_unitaire_centimes, lv.total_centimes,
+                a.nom as art_nom, a.reference as art_ref, cat.nom as cat_nom,
+                v.code_barre, v.taille
+         FROM lignes_vente lv
+         JOIN articles a ON lv.article_id = a.id
+         JOIN categories cat ON a.categorie_id = cat.id
+         LEFT JOIN variantes_stock v ON lv.variante_id = v.id
+         WHERE lv.vente_id = ?"
+    )
+    .bind(sale_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+
+    let mut items = Vec::with_capacity(line_rows.len());
+    for lr in line_rows {
+        items.push(DirectSaleCartItemInput {
+            id: lr.get("id"),
+            article_id: lr.get("article_id"),
+            variant_id: lr.get("variante_id"),
+            name: lr.get("art_nom"),
+            reference: lr.get("art_ref"),
+            barcode: lr.get("code_barre"),
+            category_name: lr.get("cat_nom"),
+            size: lr.get("taille"),
+            unit_price_cents: lr.get("prix_unitaire_centimes"),
+            quantity: lr.get("quantite"),
+            subtotal_cents: lr.get("total_centimes"),
+            photo_url: None,
+        });
+    }
+
+    let pay_row = sqlx::query(
+        "SELECT reference_transaction FROM paiements WHERE vente_id = ? LIMIT 1"
+    )
+    .bind(sale_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+
+    let tx_ref = pay_row.and_then(|r| r.get("reference_transaction"));
+
+    let payment = DirectSalePaymentInput {
+        method: moyen_paiement,
+        amount_paid_cents: total_amount_cents,
+        cash_received_cents: None,
+        change_returned_cents: None,
+        transaction_ref: tx_ref,
+        cheque_number: None,
+        bank_name: None,
+    };
+
+    Ok(DirectSaleDto {
+        id,
+        sale_number,
+        customer_id,
+        customer_name,
+        customer_phone,
+        user_id,
+        user_name,
+        total_amount_cents,
+        tax_rate,
+        tax_amount_cents,
+        payment,
+        items,
+        notes,
+        receipt_pdf_path: None,
+        created_at,
+    })
+}
+
+pub async fn execute_create_direct_sale(pool: &sqlx::SqlitePool, dto: CreateDirectSaleDto) -> Result<DirectSaleDto, AppError> {
+    if dto.items.is_empty() {
+        return Err(AppError::Validation("Le panier de vente est vide.".to_string()));
+    }
+    if dto.user_id.trim().is_empty() {
+        return Err(AppError::Validation("Utilisateur obligatoire pour enregistrer une vente.".to_string()));
+    }
+
+    let mut tx = ImmediateTx::begin(pool).await?;
+
+    let sale_id = match async {
+        use sqlx::Row;
+
+        let user_exists: Option<(String,)> = sqlx::query_as("SELECT id FROM utilisateurs WHERE id = ? AND est_actif = 1")
+            .bind(&dto.user_id)
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+        if user_exists.is_none() {
+            return Err(AppError::Validation(format!("Utilisateur introuvable ou inactif : {}", dto.user_id)));
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let mut total_amount_cents = 0i64;
+        for it in &dto.items {
+            total_amount_cents += it.subtotal_cents;
+
+            if let Some(v_id) = &it.variant_id {
+                let var_row = sqlx::query("SELECT statut FROM variantes_stock WHERE id = ?")
+                    .bind(v_id)
+                    .fetch_optional(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?
+                    .ok_or_else(|| AppError::Validation(format!("Variante introuvable : {}", v_id)))?;
+
+                let v_stat: String = var_row.get("statut");
+                if v_stat != "disponible" {
+                    return Err(AppError::Validation(format!(
+                        "La pièce '{}' ne peut pas être vendue car son statut est '{}'.",
+                        it.name, v_stat
+                    )));
+                }
+
+                sqlx::query("UPDATE variantes_stock SET statut = 'vendu', updated_at = ? WHERE id = ?")
+                    .bind(&now)
+                    .bind(v_id)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+            } else {
+                let upd_res = sqlx::query(
+                    "UPDATE articles 
+                     SET quantite_disponible = quantite_disponible - ?, updated_at = ? 
+                     WHERE id = ? AND quantite_disponible >= ?"
+                )
+                .bind(it.quantity)
+                .bind(&now)
+                .bind(&it.article_id)
+                .bind(it.quantity)
+                .execute(&mut *tx.conn)
+                .await
+                .map_err(map_sqlite_err)?;
+
+                if upd_res.rows_affected() == 0 {
+                    return Err(AppError::Validation(format!("Stock insuffisant pour l'article '{}'.", it.name)));
+                }
+            }
+        }
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO app_meta (cle, valeur, updated_at) VALUES ('dernier_numero_vente', '40', ?)"
+        )
+        .bind(&now)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        sqlx::query(
+            "UPDATE app_meta SET valeur = CAST(valeur AS INTEGER) + 1, updated_at = ? WHERE cle = 'dernier_numero_vente'"
+        )
+        .bind(&now)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        let meta_row: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'dernier_numero_vente'")
+            .fetch_one(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+        let seq_num: i64 = meta_row.0.parse().unwrap_or(41);
+        let current_year = chrono::Utc::now().format("%Y").to_string();
+        let sale_number = format!("VTE-{}-{:04}", current_year, seq_num);
+        let sale_id = format!("vte-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+
+        sqlx::query(
+            "INSERT INTO ventes (
+                id, numero_vente, client_id, utilisateur_id, montant_total_centimes,
+                moyen_paiement, statut, notes, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'completee', ?, ?)"
+        )
+        .bind(&sale_id)
+        .bind(&sale_number)
+        .bind(&dto.customer_id)
+        .bind(&dto.user_id)
+        .bind(total_amount_cents)
+        .bind(&dto.payment.method)
+        .bind(&dto.notes)
+        .bind(&now)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        for (idx, it) in dto.items.iter().enumerate() {
+            let line_id = format!("lv-{}-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0), idx);
+            sqlx::query(
+                "INSERT INTO lignes_vente (
+                    id, vente_id, article_id, variante_id, quantite,
+                    prix_unitaire_centimes, total_centimes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)"
+            )
+            .bind(&line_id)
+            .bind(&sale_id)
+            .bind(&it.article_id)
+            .bind(&it.variant_id)
+            .bind(it.quantity)
+            .bind(it.unit_price_cents)
+            .bind(it.subtotal_cents)
+            .execute(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+        }
+
+        let pay_id = format!("pay-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+        sqlx::query(
+            "INSERT INTO paiements (
+                id, location_id, vente_id, utilisateur_id, montant_centimes,
+                type_paiement, moyen_paiement, reference_transaction, notes, date_paiement
+            ) VALUES (?, NULL, ?, ?, ?, 'vente_directe', ?, ?, 'Paiement vente directe comptoir', ?)"
+        )
+        .bind(&pay_id)
+        .bind(&sale_id)
+        .bind(&dto.user_id)
+        .bind(total_amount_cents)
+        .bind(&dto.payment.method)
+        .bind(&dto.payment.transaction_ref)
+        .bind(&now)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        let active_session: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM sessions_caisse WHERE statut = 'ouverte' ORDER BY date_session DESC LIMIT 1"
+        )
+        .fetch_optional(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        if let Some((ses_id,)) = active_session {
+            let col_name = match dto.payment.method.as_str() {
+                "especes" => "total_especes_centimes",
+                "carte_bancaire" => "total_carte_centimes",
+                "cheque" => "total_cheque_centimes",
+                "virement" => "total_virement_centimes",
+                _ => "total_especes_centimes",
+            };
+            let update_sql = format!(
+                "UPDATE sessions_caisse 
+                 SET total_ventes_centimes = total_ventes_centimes + ?,
+                     {} = {} + ?
+                 WHERE id = ?",
+                col_name, col_name
+            );
+            sqlx::query(&update_sql)
+                .bind(total_amount_cents)
+                .bind(total_amount_cents)
+                .bind(&ses_id)
+                .execute(&mut *tx.conn)
+                .await
+                .map_err(map_sqlite_err)?;
+        }
+
+        Ok(sale_id)
+    }.await {
+        Ok(id) => {
+            tx.commit().await?;
+            id
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+    };
+
+    fetch_direct_sale_by_id(pool, &sale_id).await
+}
+
+#[command]
+pub async fn create_direct_sale(dto: CreateDirectSaleDto, state: State<'_, DbState>) -> Result<DirectSaleDto, AppError> {
+    execute_create_direct_sale(&state.pool, dto).await
+}
+
+pub async fn execute_list_direct_sales(pool: &sqlx::SqlitePool) -> Result<Vec<DirectSaleDto>, AppError> {
+    let sale_ids: Vec<(String,)> = sqlx::query_as("SELECT id FROM ventes ORDER BY created_at DESC")
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+    let mut result = Vec::with_capacity(sale_ids.len());
+    for (id,) in sale_ids {
+        let dto = fetch_direct_sale_by_id(pool, &id).await?;
+        result.push(dto);
+    }
+    Ok(result)
+}
+
+#[command]
+pub async fn list_direct_sales(state: State<'_, DbState>) -> Result<Vec<DirectSaleDto>, AppError> {
+    execute_list_direct_sales(&state.pool).await
+}
+
+pub async fn fetch_cash_session_dto_by_id(pool: &sqlx::SqlitePool, session_id: &str) -> Result<CashSessionDto, AppError> {
+    use sqlx::Row;
+
+    let row = sqlx::query(
+        "SELECT s.*, u.nom_complet as user_name, u.role as user_role
+         FROM sessions_caisse s
+         JOIN utilisateurs u ON s.utilisateur_id = u.id
+         WHERE s.id = ?"
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::DatabaseError)?
+    .ok_or_else(|| AppError::NotFound(format!("Session de caisse introuvable : {}", session_id)))?;
+
+    let id: String = row.get("id");
+    let cloture_number: String = row.get("numero_session");
+    let date: String = row.get("date_session");
+    let opened_at: String = row.get("opened_at");
+    let closed_at: Option<String> = row.get("closed_at");
+    let closed_by_user_id: Option<String> = Some(row.get("utilisateur_id"));
+    let closed_by_user_name: Option<String> = Some(row.get("user_name"));
+    let closed_by_role: Option<String> = Some(row.get("user_role"));
+    let status: String = row.get("statut");
+    let initial_cash_float_cents: i64 = row.get("fonds_initial_centimes");
+    let sales_total_cents: i64 = row.get("total_ventes_centimes");
+    let rentals_total_cents: i64 = row.get("total_locations_centimes");
+    let deposits_total_cents: i64 = row.get("total_cautions_centimes");
+    let grand_total_cents = sales_total_cents + rentals_total_cents;
+
+    let total_especes: i64 = row.get("total_especes_centimes");
+    let total_carte: i64 = row.get("total_carte_centimes");
+    let total_cheque: i64 = row.get("total_cheque_centimes");
+    let total_virement: i64 = row.get("total_virement_centimes");
+
+    let counted_cash_cents: Option<i64> = row.get("total_especes_compte_centimes");
+    let discrepancy_cents: Option<i64> = row.get("ecart_centimes");
+    let operator_notes: Option<String> = row.get("notes");
+
+    let theoretical_cash_cents = initial_cash_float_cents + total_especes;
+
+    let breakdown = CashSessionBreakdown {
+        especes: CashSessionBreakdownMethod { total_cents: total_especes, transaction_count: 0 },
+        carte_bancaire: CashSessionBreakdownMethod { total_cents: total_carte, transaction_count: 0 },
+        cheque: CashSessionBreakdownMethod { total_cents: total_cheque, transaction_count: 0 },
+        virement: CashSessionBreakdownMethod { total_cents: total_virement, transaction_count: 0 },
+    };
+
+    Ok(CashSessionDto {
+        id,
+        cloture_number,
+        date,
+        opened_at,
+        closed_at,
+        closed_by_user_id,
+        closed_by_user_name,
+        closed_by_role,
+        status,
+        initial_cash_float_cents,
+        sales_total_cents,
+        rentals_total_cents,
+        deposits_total_cents,
+        grand_total_cents,
+        breakdown,
+        theoretical_cash_cents,
+        counted_cash_cents,
+        discrepancy_cents,
+        operator_notes,
+    })
+}
+
+pub async fn execute_open_cash_session(pool: &sqlx::SqlitePool, dto: OpenCashSessionDto) -> Result<CashSessionDto, AppError> {
+    let mut tx = ImmediateTx::begin(pool).await?;
+
+    let session_id = match async {
+        let active: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM sessions_caisse WHERE statut = 'ouverte' LIMIT 1"
+        )
+        .fetch_optional(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        if active.is_some() {
+            return Err(AppError::Validation("Une session de caisse est déjà actuellement ouverte.".to_string()));
+        }
+
+        let user_exists: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM utilisateurs WHERE id = ? AND est_actif = 1"
+        )
+        .bind(&dto.utilisateur_id)
+        .fetch_optional(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        if user_exists.is_none() {
+            return Err(AppError::Validation(format!("Utilisateur introuvable ou inactif : {}", dto.utilisateur_id)));
+        }
+
+        let today = today_local();
+        let now = chrono::Utc::now().to_rfc3339();
+        let session_id = format!("ses-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+        let num_session = format!("Z-{}-01", today.replace('-', ""));
+
+        sqlx::query(
+            "INSERT INTO sessions_caisse (
+                id, numero_session, utilisateur_id, date_session, statut,
+                fonds_initial_centimes, total_especes_theorique_centimes,
+                total_ventes_centimes, total_locations_centimes, total_cautions_centimes,
+                total_especes_centimes, total_carte_centimes, total_cheque_centimes, total_virement_centimes,
+                notes, opened_at
+            ) VALUES (?, ?, ?, ?, 'ouverte', ?, ?, 0, 0, 0, 0, 0, 0, 0, ?, ?)"
+        )
+        .bind(&session_id)
+        .bind(&num_session)
+        .bind(&dto.utilisateur_id)
+        .bind(&today)
+        .bind(dto.initial_cash_float_cents)
+        .bind(dto.initial_cash_float_cents)
+        .bind(&dto.notes)
+        .bind(&now)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        Ok(session_id)
+    }.await {
+        Ok(id) => {
+            tx.commit().await?;
+            id
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+    };
+
+    fetch_cash_session_dto_by_id(pool, &session_id).await
+}
+
+#[command]
+pub async fn open_cash_session(dto: OpenCashSessionDto, state: State<'_, DbState>) -> Result<CashSessionDto, AppError> {
+    execute_open_cash_session(&state.pool, dto).await
+}
+
+pub async fn execute_close_cash_session(pool: &sqlx::SqlitePool, dto: CloseCashSessionDto) -> Result<CashSessionDto, AppError> {
+    let mut tx = ImmediateTx::begin(pool).await?;
+
+    let session_id = match async {
+        use sqlx::Row;
+
+        let row = if let Some(ref sid) = dto.session_id {
+            sqlx::query("SELECT id, fonds_initial_centimes, total_especes_centimes, statut FROM sessions_caisse WHERE id = ?")
+                .bind(sid)
+                .fetch_optional(&mut *tx.conn)
+                .await
+                .map_err(map_sqlite_err)?
+        } else {
+            sqlx::query("SELECT id, fonds_initial_centimes, total_especes_centimes, statut FROM sessions_caisse WHERE statut = 'ouverte' ORDER BY date_session DESC LIMIT 1")
+                .fetch_optional(&mut *tx.conn)
+                .await
+                .map_err(map_sqlite_err)?
+        }.ok_or_else(|| AppError::Validation("Aucune session de caisse ouverte à clôturer.".to_string()))?;
+
+        let status: String = row.get("statut");
+        if status != "ouverte" {
+            return Err(AppError::Validation("Cette session de caisse est déjà clôturée.".to_string()));
+        }
+
+        let sid: String = row.get("id");
+        let initial_cash: i64 = row.get("fonds_initial_centimes");
+        let cash_collected: i64 = row.get("total_especes_centimes");
+        let theoretical_cash = initial_cash + cash_collected;
+        let discrepancy = dto.counted_cash_cents - theoretical_cash;
+
+        let now = chrono::Utc::now().to_rfc3339();
+
+        sqlx::query(
+            "UPDATE sessions_caisse 
+             SET statut = 'cloturee',
+                 total_especes_compte_centimes = ?,
+                 ecart_centimes = ?,
+                 closed_at = ?,
+                 notes = COALESCE(?, notes)
+             WHERE id = ?"
+        )
+        .bind(dto.counted_cash_cents)
+        .bind(discrepancy)
+        .bind(&now)
+        .bind(&dto.operator_notes)
+        .bind(&sid)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        Ok(sid)
+    }.await {
+        Ok(id) => {
+            tx.commit().await?;
+            id
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+    };
+
+    fetch_cash_session_dto_by_id(pool, &session_id).await
+}
+
+#[command]
+pub async fn close_cash_session(dto: CloseCashSessionDto, state: State<'_, DbState>) -> Result<CashSessionDto, AppError> {
+    execute_close_cash_session(&state.pool, dto).await
+}
+
+pub async fn execute_get_active_cash_session(pool: &sqlx::SqlitePool) -> Result<Option<CashSessionDto>, AppError> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM sessions_caisse WHERE statut = 'ouverte' ORDER BY date_session DESC LIMIT 1"
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+
+    match row {
+        Some((id,)) => Ok(Some(fetch_cash_session_dto_by_id(pool, &id).await?)),
+        None => Ok(None),
+    }
+}
+
+#[command]
+pub async fn get_active_cash_session(state: State<'_, DbState>) -> Result<Option<CashSessionDto>, AppError> {
+    execute_get_active_cash_session(&state.pool).await
+}
+
+pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentDto) -> Result<Paiement, AppError> {
+    if dto.montant_centimes <= 0 {
+        return Err(AppError::Validation("Le montant du paiement doit être strictement positif.".to_string()));
+    }
+
+    let mut tx = ImmediateTx::begin(pool).await?;
+
+    let pay_id = match async {
+        let now = chrono::Utc::now().to_rfc3339();
+        let pay_id = format!("pay-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+
+        sqlx::query(
+            "INSERT INTO paiements (
+                id, location_id, vente_id, utilisateur_id, montant_centimes,
+                type_paiement, moyen_paiement, reference_transaction, notes, date_paiement
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&pay_id)
+        .bind(&dto.location_id)
+        .bind(&dto.vente_id)
+        .bind(&dto.utilisateur_id)
+        .bind(dto.montant_centimes)
+        .bind(&dto.type_paiement)
+        .bind(&dto.moyen_paiement)
+        .bind(&dto.reference_transaction)
+        .bind(&dto.notes)
+        .bind(&now)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        let active_session: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM sessions_caisse WHERE statut = 'ouverte' ORDER BY date_session DESC LIMIT 1"
+        )
+        .fetch_optional(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        if let Some((ses_id,)) = active_session {
+            let col_name = match dto.moyen_paiement.as_str() {
+                "especes" => "total_especes_centimes",
+                "carte_bancaire" => "total_carte_centimes",
+                "cheque" => "total_cheque_centimes",
+                "virement" => "total_virement_centimes",
+                _ => "total_especes_centimes",
+            };
+            let update_sql = format!(
+                "UPDATE sessions_caisse 
+                 SET total_locations_centimes = total_locations_centimes + ?,
+                     {} = {} + ?
+                 WHERE id = ?",
+                col_name, col_name
+            );
+            sqlx::query(&update_sql)
+                .bind(dto.montant_centimes)
+                .bind(dto.montant_centimes)
+                .bind(&ses_id)
+                .execute(&mut *tx.conn)
+                .await
+                .map_err(map_sqlite_err)?;
+        }
+
+        Ok(pay_id)
+    }.await {
+        Ok(id) => {
+            tx.commit().await?;
+            id
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+    };
+
+    sqlx::query_as::<_, Paiement>("SELECT * FROM paiements WHERE id = ?")
+        .bind(&pay_id)
+        .fetch_one(pool)
+        .await
+        .map_err(AppError::DatabaseError)
+}
+
+#[command]
+pub async fn record_payment(dto: RecordPaymentDto, state: State<'_, DbState>) -> Result<Paiement, AppError> {
+    execute_record_payment(&state.pool, dto).await
+}
+
+#[command]
+pub async fn list_payments(location_id: Option<String>, vente_id: Option<String>, state: State<'_, DbState>) -> Result<Vec<Paiement>, AppError> {
+    if let Some(loc_id) = location_id {
+        sqlx::query_as::<_, Paiement>("SELECT * FROM paiements WHERE location_id = ? ORDER BY date_paiement ASC")
+            .bind(loc_id)
+            .fetch_all(&state.pool)
+            .await
+            .map_err(AppError::DatabaseError)
+    } else if let Some(v_id) = vente_id {
+        sqlx::query_as::<_, Paiement>("SELECT * FROM paiements WHERE vente_id = ? ORDER BY date_paiement ASC")
+            .bind(v_id)
+            .fetch_all(&state.pool)
+            .await
+            .map_err(AppError::DatabaseError)
+    } else {
+        sqlx::query_as::<_, Paiement>("SELECT * FROM paiements ORDER BY date_paiement DESC")
+            .fetch_all(&state.pool)
+            .await
+            .map_err(AppError::DatabaseError)
+    }
 }
 
 // ----------------------------------------------------------------------------

@@ -50,23 +50,28 @@ export const ClotureCaisseView: React.FC = () => {
   const activeData = todayCloture || draft;
 
   const handleValidate = async () => {
-    const countedDA =
-      countedCashInput.trim() !== ""
-        ? Math.round(parseFloat(countedCashInput))
-        : activeData.theoretical_cash_cents;
-
-    const cloture = validateTodayCloture(countedDA, operatorNotes);
-    toast.success("Caisse journalière clôturée et scellée avec succès !");
-
-    // Impression automatique du rapport Z
     try {
-      setIsPrinting(true);
-      const res = await generateCloturePdf(cloture, transactions);
-      res.print();
-      setIsPrinting(false);
-    } catch (err) {
+      const countedDA =
+        countedCashInput.trim() !== ""
+          ? Math.round(parseFloat(countedCashInput))
+          : activeData.theoretical_cash_cents;
+
+      const cloture = await validateTodayCloture(countedDA, operatorNotes);
+      toast.success("Caisse journalière clôturée et scellée avec succès !");
+
+      // Impression automatique du rapport Z
+      try {
+        setIsPrinting(true);
+        const res = await generateCloturePdf(cloture, transactions);
+        res.print();
+        setIsPrinting(false);
+      } catch (err) {
+        console.error(err);
+        setIsPrinting(false);
+      }
+    } catch (err: any) {
       console.error(err);
-      setIsPrinting(false);
+      toast.error(err?.message || "Erreur lors de la clôture de la caisse");
     }
   };
 

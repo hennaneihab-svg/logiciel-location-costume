@@ -57,6 +57,9 @@ jobs:
       - name: Run Rental SQLite & Migration 0006 FK Restrict Tests (Rust)
         run: cargo test --manifest-path src-tauri/Cargo.toml --test rental_sqlite_test -- --nocapture
 
+      - name: Run Caisse SQLite Tests (Rust)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test caisse_sqlite_test -- --nocapture
+
       - name: Build Tauri Binary & Bundle
         run: npm run tauri build
 

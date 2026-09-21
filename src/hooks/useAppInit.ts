@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRentalStore } from "@/store/rentalStore";
-import { isTauri } from "@/lib/utils";
+import { useCaisseStore } from "@/store/caisseStore";
+import { isTauri } from "@/services/tauri";
 
 export type AppInitStatus = "initializing" | "ready" | "error";
 
@@ -21,8 +22,10 @@ export function useAppInit(): AppInitState {
 
     try {
       if (isTauri()) {
-        // Chargement des contrats depuis SQLite
+        // Chargement des contrats et des données de caisse depuis SQLite
         await useRentalStore.getState().loadContracts();
+        await useCaisseStore.getState().loadSales();
+        await useCaisseStore.getState().loadActiveSession();
       }
       setStatus("ready");
     } catch (err: any) {

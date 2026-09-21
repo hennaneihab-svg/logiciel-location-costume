@@ -10,7 +10,8 @@ import type {
 import type { StockArticle, StockVariant } from "@/types/stock";
 import { useStockStore } from "@/store/stockStore";
 import { useRentalStore } from "@/store/rentalStore";
-import { dbStorage } from "@/services/dbStorage";
+import { useAuthStore } from "@/store/authStore";
+import { invokeCommand, isTauri } from "@/services/tauri";
 
 interface CashierUser {
   id: string;
@@ -32,6 +33,13 @@ interface CaisseStoreState {
   todayCloture: ClotureCaisse | null;
   cloturesHistory: ClotureCaisse[];
   lastCompletedSale: DirectSale | null;
+  isLoading: boolean;
+  error: string | null;
+
+  // Actions Initialisation & SQLite
+  loadSales: () => Promise<void>;
+  loadActiveSession: () => Promise<void>;
+  openCashSession: (initialCashFloatCents: number, notes?: string) => Promise<any>;
 
   // Actions Panier
   addToCart: (article: StockArticle, variant?: StockVariant) => void;
@@ -49,11 +57,11 @@ interface CaisseStoreState {
   // Actions Clôture
   getTodayTransactions: () => CaisseTransactionItem[];
   getClotureDraft: (countedCashCents?: number) => ClotureCaisse;
-  validateTodayCloture: (countedCashCents: number, operatorNotes?: string) => ClotureCaisse;
+  validateTodayCloture: (countedCashCents: number, operatorNotes?: string) => Promise<ClotureCaisse>;
   reopenCaisse: () => void;
 }
 
-// Données initiales réalistes pour la caisse
+// Données initiales pour tests / mode web
 const INITIAL_SALES: DirectSale[] = [
   {
     id: "vte-001",
@@ -118,16 +126,61 @@ const INITIAL_SALES: DirectSale[] = [
 export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
   cart: [],
   selectedCustomer: null,
-  salesHistory: dbStorage.load<DirectSale[]>(dbStorage.KEYS.SALES, INITIAL_SALES),
+  salesHistory: INITIAL_SALES,
   currentCashier: AVAILABLE_CASHIERS[0],
   initialCashFloatCents: 15000, // 15 000 DA
   todayCloture: null,
-  cloturesHistory: dbStorage.load<ClotureCaisse[]>("atelier_prestige_db_clotures", []),
+  cloturesHistory: [],
   lastCompletedSale: null,
+  isLoading: false,
+  error: null,
+
+  loadSales: async () => {
+    if (!isTauri()) return;
+    try {
+      set({ isLoading: true, error: null });
+      const sales = await invokeCommand<DirectSale[]>("list_direct_sales");
+      set({ salesHistory: sales, isLoading: false });
+    } catch (err: any) {
+      console.error("[caisseStore] Erreur chargement ventes SQLite :", err);
+      set({ error: err?.message || "Impossible de charger les ventes", isLoading: false });
+      throw err;
+    }
+  },
+
+  loadActiveSession: async () => {
+    if (!isTauri()) return;
+    try {
+      const active = await invokeCommand<any | null>("get_active_cash_session");
+      if (active) {
+        set({ initialCashFloatCents: active.initial_cash_float_cents });
+      }
+    } catch (err) {
+      console.error("[caisseStore] Erreur chargement session active :", err);
+    }
+  },
+
+  openCashSession: async (initialCashFloatCents: number, notes?: string) => {
+    const currentUser = useAuthStore.getState().currentUser;
+    if (!currentUser) {
+      throw new Error("Opération impossible : aucun utilisateur n'est actuellement authentifié.");
+    }
+    if (isTauri()) {
+      const session = await invokeCommand<any>("open_cash_session", {
+        dto: {
+          utilisateur_id: currentUser.id,
+          initial_cash_float_cents: initialCashFloatCents,
+          notes: notes || null,
+        },
+      });
+      set({ initialCashFloatCents: session.initial_cash_float_cents, todayCloture: null });
+      return session;
+    }
+    set({ initialCashFloatCents, todayCloture: null });
+  },
 
   addToCart: (article: StockArticle, variant?: StockVariant) => {
     set((state) => {
-      // Prix de vente prioritaire, sinon prix de location
       const priceCents = article.sale_price_cents || article.rental_price_cents;
       const targetCartId = variant ? `${article.id}-${variant.id}` : article.id;
 
@@ -209,18 +262,80 @@ export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
   },
 
   processDirectSale: async (payment: DirectSalePaymentDetails, notes?: string) => {
-    const { cart, selectedCustomer, currentCashier, salesHistory } = get();
+    const { cart, selectedCustomer } = get();
+    const currentUser = useAuthStore.getState().currentUser;
+
+    if (!currentUser) {
+      throw new Error("Opération impossible : aucun utilisateur n'est actuellement authentifié.");
+    }
 
     if (cart.length === 0) {
       throw new Error("Le panier est vide");
     }
 
+    if (isTauri()) {
+      const itemsPayload = cart.map((item) => ({
+        id: item.id,
+        article_id: item.article_id,
+        variant_id: item.variant_id || null,
+        name: item.name,
+        reference: item.reference,
+        barcode: item.barcode || null,
+        category_name: item.category_name,
+        size: item.size || null,
+        quantity: item.quantity,
+        unit_price_cents: item.unit_price_cents,
+        subtotal_cents: item.subtotal_cents,
+        photo_url: item.photo_url || null,
+      }));
+
+      const dto = {
+        customer_id: selectedCustomer?.id || null,
+        customer_name: selectedCustomer?.name || (selectedCustomer ? undefined : "Client Comptoir"),
+        customer_phone: selectedCustomer?.phone || null,
+        user_id: currentUser.id,
+        items: itemsPayload,
+        payment: {
+          method: payment.method,
+          amount_paid_cents: payment.amount_paid_cents,
+          transaction_ref: payment.transaction_ref || payment.cheque_number || null,
+          cash_received_cents: payment.cash_received_cents || null,
+          change_returned_cents: payment.change_returned_cents || null,
+        },
+        notes: notes || null,
+      };
+
+      const createdSale = await invokeCommand<DirectSale>("create_direct_sale", { dto });
+
+      const stockStore = useStockStore.getState();
+      cart.forEach((cartItem) => {
+        if (cartItem.variant_id) {
+          stockStore.changeVariantStatus(
+            cartItem.article_id,
+            cartItem.variant_id,
+            "vendu",
+            `Vente directe comptoir ${createdSale.sale_number}`
+          );
+        }
+      });
+
+      set((state) => ({
+        salesHistory: [createdSale, ...state.salesHistory],
+        cart: [],
+        selectedCustomer: null,
+        lastCompletedSale: createdSale,
+      }));
+
+      return createdSale;
+    }
+
+    // Hors Tauri (tests, web) - aucun appel dbStorage.save
     const totalAmountCents = cart.reduce((acc, it) => acc + it.subtotal_cents, 0);
-    const taxRate = 0.19; // TVA algérienne 19%
+    const taxRate = 0.19;
     const totalHtCents = Math.round(totalAmountCents / (1 + taxRate));
     const taxAmountCents = totalAmountCents - totalHtCents;
 
-    const saleNumber = `VTE-2026-${String(salesHistory.length + 40).padStart(4, "0")}`;
+    const saleNumber = `VTE-2026-${String(get().salesHistory.length + 40).padStart(4, "0")}`;
 
     const newSale: DirectSale = {
       id: `vte-${Date.now()}`,
@@ -228,8 +343,8 @@ export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
       customer_id: selectedCustomer?.id,
       customer_name: selectedCustomer?.name || "Client Comptoir",
       customer_phone: selectedCustomer?.phone,
-      user_id: currentCashier.id,
-      user_name: currentCashier.name,
+      user_id: currentUser.id,
+      user_name: currentUser.full_name,
       total_amount_cents: totalAmountCents,
       tax_rate: taxRate,
       tax_amount_cents: taxAmountCents,
@@ -242,7 +357,6 @@ export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
       created_at: new Date().toISOString(),
     };
 
-    // Décrémentation du stock si variantes vendues
     const stockStore = useStockStore.getState();
     cart.forEach((cartItem) => {
       if (cartItem.variant_id) {
@@ -255,16 +369,12 @@ export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
       }
     });
 
-    set((state) => {
-      const updatedSales = [newSale, ...state.salesHistory];
-      dbStorage.save(dbStorage.KEYS.SALES, updatedSales);
-      return {
-        salesHistory: updatedSales,
-        cart: [],
-        selectedCustomer: null,
-        lastCompletedSale: newSale,
-      };
-    });
+    set((state) => ({
+      salesHistory: [newSale, ...state.salesHistory],
+      cart: [],
+      selectedCustomer: null,
+      lastCompletedSale: newSale,
+    }));
 
     return newSale;
   },
@@ -316,7 +426,6 @@ export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
       }
     });
 
-    // Tri par date décroissante
     return transactions.sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
@@ -381,25 +490,68 @@ export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
     };
   },
 
-  validateTodayCloture: (countedCashCents: number, operatorNotes?: string) => {
+  validateTodayCloture: async (countedCashCents: number, operatorNotes?: string) => {
+    const currentUser = useAuthStore.getState().currentUser;
+    if (!currentUser) {
+      throw new Error("Opération impossible : aucun utilisateur n'est actuellement authentifié.");
+    }
+
+    if (isTauri()) {
+      const closedSession = await invokeCommand<any>("close_cash_session", {
+        dto: {
+          session_id: null,
+          utilisateur_id: currentUser.id,
+          counted_cash_cents: countedCashCents,
+          operator_notes: operatorNotes || null,
+        },
+      });
+
+      const finalized: ClotureCaisse = {
+        id: closedSession.id,
+        cloture_number: closedSession.cloture_number,
+        date: closedSession.date,
+        closed_at: closedSession.closed_at || new Date().toISOString(),
+        closed_by_user_id: closedSession.closed_by_user_id || currentUser.id,
+        closed_by_user_name: closedSession.closed_by_user_name || currentUser.full_name,
+        closed_by_role: closedSession.closed_by_role || "Opérateur Caisse",
+        status: "cloturee",
+        initial_cash_float_cents: closedSession.initial_cash_float_cents,
+        sales_total_cents: closedSession.sales_total_cents,
+        rentals_total_cents: closedSession.rentals_total_cents,
+        deposits_total_cents: closedSession.deposits_total_cents,
+        grand_total_cents: closedSession.grand_total_cents,
+        breakdown: closedSession.breakdown,
+        theoretical_cash_cents: closedSession.theoretical_cash_cents,
+        counted_cash_cents: closedSession.counted_cash_cents ?? countedCashCents,
+        discrepancy_cents: closedSession.discrepancy_cents ?? (countedCashCents - closedSession.theoretical_cash_cents),
+        operator_notes: closedSession.operator_notes,
+      };
+
+      set((state) => ({
+        todayCloture: finalized,
+        cloturesHistory: [finalized, ...state.cloturesHistory.filter((c) => c.id !== finalized.id)],
+      }));
+
+      return finalized;
+    }
+
+    // Mode hors Tauri (tests vitest) - pas de dbStorage.save
     const draft = get().getClotureDraft(countedCashCents);
     const finalized: ClotureCaisse = {
       ...draft,
       status: "cloturee",
       closed_at: new Date().toISOString(),
+      closed_by_user_id: currentUser.id,
+      closed_by_user_name: currentUser.full_name,
       counted_cash_cents: countedCashCents,
       discrepancy_cents: countedCashCents - draft.theoretical_cash_cents,
       operator_notes: operatorNotes,
     };
 
-    set((state) => {
-      const updatedClotures = [finalized, ...state.cloturesHistory];
-      dbStorage.save("atelier_prestige_db_clotures", updatedClotures);
-      return {
-        todayCloture: finalized,
-        cloturesHistory: updatedClotures,
-      };
-    });
+    set((state) => ({
+      todayCloture: finalized,
+      cloturesHistory: [finalized, ...state.cloturesHistory],
+    }));
 
     return finalized;
   },

@@ -509,3 +509,143 @@ pub struct ArticlePhotoFullDto {
     pub data_base64: String,
 }
 
+// ============================================================================
+// VENTES DIRECTES & SESSIONS DE CAISSE
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectSalePaymentInput {
+    pub method: String, // "especes", "carte_bancaire", "cheque", "virement", "autre"
+    pub amount_paid_cents: i64,
+    pub cash_received_cents: Option<i64>,
+    pub change_returned_cents: Option<i64>,
+    pub transaction_ref: Option<String>,
+    pub cheque_number: Option<String>,
+    pub bank_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectSaleCartItemInput {
+    #[serde(default)]
+    pub id: String,
+    pub article_id: String,
+    #[serde(default)]
+    pub variant_id: Option<String>,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub reference: String,
+    #[serde(default)]
+    pub barcode: Option<String>,
+    #[serde(default)]
+    pub category_name: String,
+    #[serde(default)]
+    pub size: Option<String>,
+    #[serde(default)]
+    pub unit_price_cents: i64,
+    #[serde(default = "default_item_quantity")]
+    pub quantity: i64,
+    #[serde(default)]
+    pub subtotal_cents: i64,
+    #[serde(default)]
+    pub photo_url: Option<String>,
+}
+
+fn default_item_quantity() -> i64 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateDirectSaleDto {
+    pub customer_id: Option<String>,
+    pub customer_name: Option<String>,
+    pub customer_phone: Option<String>,
+    pub user_id: String,
+    pub items: Vec<DirectSaleCartItemInput>,
+    pub payment: DirectSalePaymentInput,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectSaleDto {
+    pub id: String,
+    pub sale_number: String,
+    pub customer_id: Option<String>,
+    pub customer_name: String,
+    pub customer_phone: Option<String>,
+    pub user_id: String,
+    pub user_name: String,
+    pub total_amount_cents: i64,
+    pub tax_rate: f64,
+    pub tax_amount_cents: i64,
+    pub payment: DirectSalePaymentInput,
+    pub items: Vec<DirectSaleCartItemInput>,
+    pub notes: Option<String>,
+    pub receipt_pdf_path: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordPaymentDto {
+    pub location_id: Option<String>,
+    pub vente_id: Option<String>,
+    pub utilisateur_id: String,
+    pub montant_centimes: i64,
+    pub type_paiement: String,
+    pub moyen_paiement: String,
+    pub reference_transaction: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenCashSessionDto {
+    pub utilisateur_id: String,
+    pub initial_cash_float_cents: i64,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloseCashSessionDto {
+    pub session_id: Option<String>,
+    pub utilisateur_id: String,
+    pub counted_cash_cents: i64,
+    pub operator_notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CashSessionBreakdownMethod {
+    pub total_cents: i64,
+    pub transaction_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CashSessionBreakdown {
+    pub especes: CashSessionBreakdownMethod,
+    pub carte_bancaire: CashSessionBreakdownMethod,
+    pub cheque: CashSessionBreakdownMethod,
+    pub virement: CashSessionBreakdownMethod,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CashSessionDto {
+    pub id: String,
+    pub cloture_number: String,
+    pub date: String,
+    pub opened_at: String,
+    pub closed_at: Option<String>,
+    pub closed_by_user_id: Option<String>,
+    pub closed_by_user_name: Option<String>,
+    pub closed_by_role: Option<String>,
+    pub status: String,
+    pub initial_cash_float_cents: i64,
+    pub sales_total_cents: i64,
+    pub rentals_total_cents: i64,
+    pub deposits_total_cents: i64,
+    pub grand_total_cents: i64,
+    pub breakdown: CashSessionBreakdown,
+    pub theoretical_cash_cents: i64,
+    pub counted_cash_cents: Option<i64>,
+    pub discrepancy_cents: Option<i64>,
+    pub operator_notes: Option<String>,
+}
+
