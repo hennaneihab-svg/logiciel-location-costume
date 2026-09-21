@@ -191,4 +191,30 @@ describe("Scan Logic & Anti-doublon Verification", () => {
     expect(res.status).toBe("error");
     expect(res.code).toBe("UNKNOWN_ARTICLE");
   });
+
+  it("utilise le prix réel de la base et ignore tout prix altéré ou obsolète présent dans le JSON du QR", () => {
+    // Le QR contient un vieux prix ou prix falsifié (ex: 100 DA au lieu de 8000 DA)
+    const tamperedQr = JSON.stringify({
+      ref: "BAR-SMK-001",
+      name: "Smoking Noir Falsifié",
+      barcode: "BAR-SMK-001-48",
+      size: "48",
+      price_cents: 100, // Altéré !
+    });
+
+    const res = simulateScanLogic({
+      rawCode: tamperedQr,
+      pickupDate: "2026-09-22",
+      returnDate: "2026-09-25",
+      articles: mockArticles,
+      selectedVariantIds: [],
+      availabilityChecker: () => ({ available: true }),
+    });
+
+    expect(res.status).toBe("success");
+    expect(res.variantId).toBe("var-01-48");
+    // L'article identifié reste le modèle officiel mockArticles[0]
+    const matchedArticle = mockArticles.find((a) => a.id === "art-01");
+    expect(matchedArticle?.reference).toBe("BAR-SMK-001");
+  });
 });

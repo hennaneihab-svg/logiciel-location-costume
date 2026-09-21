@@ -1,4 +1,4 @@
-﻿name: Build & Verify Atelier Prestige
+name: Build & Verify Atelier Prestige
 
 on:
   push:
@@ -50,6 +50,9 @@ jobs:
 
       - name: Run DB Lifecycle & Persistence Tests (Rust)
         run: cargo test --manifest-path src-tauri/Cargo.toml --test db_lifecycle_test -- --nocapture
+
+      - name: Run Pack Concurrency Test (Rust)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test pack_concurrency_test -- --nocapture
 
       - name: Build Tauri Binary & Bundle
         run: npm run tauri build
