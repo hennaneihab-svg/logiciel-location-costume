@@ -113,7 +113,7 @@ async fn test_date_collision_and_stock_rollback() {
     // 1. Créer une réservation du 2026-11-01 au 2026-11-05 pour var-001
     let dto1 = CreateRentalContractDto {
         customer_id: "cli-002".to_string(),
-        utilisateur_id: None,
+        utilisateur_id: Some("usr-001".to_string()),
         pickup_date: "2026-11-01".to_string(),
         return_date_scheduled: "2026-11-05".to_string(),
         event_date: None,
@@ -133,7 +133,7 @@ async fn test_date_collision_and_stock_rollback() {
     // 2. Tenter une réservation chevauchante du 2026-11-03 au 2026-11-08 pour la même var-001
     let dto2 = CreateRentalContractDto {
         customer_id: "cli-003".to_string(),
-        utilisateur_id: None,
+        utilisateur_id: Some("usr-002".to_string()),
         pickup_date: "2026-11-03".to_string(),
         return_date_scheduled: "2026-11-08".to_string(),
         event_date: None,
@@ -152,84 +152,114 @@ async fn test_date_collision_and_stock_rollback() {
     let err_msg = res2.unwrap_err().to_string();
     assert!(err_msg.contains("Conflit de date"), "L'erreur doit mentionner le conflit de dates : {}", err_msg);
 
-    // 3. Tenter une réservation non chevauchante (ex: 2026-11-10 au 2026-11-15)
-    // Note : comme var-001 a été marquée 'reserve', une tentative à une autre date sans libération
-    // dépend des règles physiques et calendaires
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
 
 #[tokio::test]
-async fn test_concurrent_rental_creation_atomicity() {
-    let test_dir = std::env::temp_dir().join(format!("test_conc_rental_{}", chrono::Utc::now().timestamp_micros()));
+async fn test_concurrent_rental_creation_atomicity_20_iterations() {
+    let test_dir = std::env::temp_dir().join(format!("test_conc_rental_20_{}", chrono::Utc::now().timestamp_micros()));
     fs::create_dir_all(&test_dir).expect("Failed to create test dir");
 
     let pool = Arc::new(db::init_db(&test_dir).await.expect("Failed to init db"));
 
-    // Utilisation de la variante var-009 (disponible)
-    let p1 = Arc::clone(&pool);
-    let p2 = Arc::clone(&pool);
+    // Exécution de 20 itérations de concurrence stricte
+    for i in 0..20 {
+        let var_id = format!("var-conc-{:02}", i);
+        let barcode = format!("BAR-CONC-{:02}", i);
+        let now = chrono::Utc::now().to_rfc3339();
 
-    let task1 = tokio::spawn(async move {
-        let dto = CreateRentalContractDto {
-            customer_id: "cli-001".to_string(),
-            utilisateur_id: None,
-            pickup_date: "2026-12-01".to_string(),
-            return_date_scheduled: "2026-12-05".to_string(),
-            event_date: None,
-            selected_variant_ids: vec!["var-009".to_string()],
-            quantity_items: None,
-            discount_cents: None,
-            deposit_method: "especes".to_string(),
-            deposit_amount_cents: None,
-            paid_amount_cents: None,
-            payment_method: "especes".to_string(),
-            notes: None,
+        // Créer une variante dédiée disponible pour cette itération
+        sqlx::query(
+            "INSERT INTO variantes_stock (id, article_id, code_barre, taille, statut, created_at, updated_at)
+             VALUES (?, 'art-001', ?, '50', 'disponible', ?, ?)"
+        )
+        .bind(&var_id)
+        .bind(&barcode)
+        .bind(&now)
+        .bind(&now)
+        .execute(&*pool)
+        .await
+        .expect("Failed to insert test variant");
+
+        let p1 = Arc::clone(&pool);
+        let p2 = Arc::clone(&pool);
+        let v1 = var_id.clone();
+        let v2 = var_id.clone();
+
+        let task1 = tokio::spawn(async move {
+            let dto = CreateRentalContractDto {
+                customer_id: "cli-001".to_string(),
+                utilisateur_id: Some("usr-001".to_string()),
+                pickup_date: "2027-06-01".to_string(),
+                return_date_scheduled: "2027-06-05".to_string(),
+                event_date: None,
+                selected_variant_ids: vec![v1],
+                quantity_items: None,
+                discount_cents: None,
+                deposit_method: "especes".to_string(),
+                deposit_amount_cents: None,
+                paid_amount_cents: None,
+                payment_method: "especes".to_string(),
+                notes: None,
+            };
+            execute_create_rental(&p1, dto).await
+        });
+
+        let task2 = tokio::spawn(async move {
+            let dto = CreateRentalContractDto {
+                customer_id: "cli-002".to_string(),
+                utilisateur_id: Some("usr-002".to_string()),
+                pickup_date: "2027-06-01".to_string(),
+                return_date_scheduled: "2027-06-05".to_string(),
+                event_date: None,
+                selected_variant_ids: vec![v2],
+                quantity_items: None,
+                discount_cents: None,
+                deposit_method: "carte_bancaire".to_string(),
+                deposit_amount_cents: None,
+                paid_amount_cents: None,
+                payment_method: "carte_bancaire".to_string(),
+                notes: None,
+            };
+            execute_create_rental(&p2, dto).await
+        });
+
+        let (res1, res2) = tokio::join!(task1, task2);
+        let r1 = res1.expect("Task 1 join error");
+        let r2 = res2.expect("Task 2 join error");
+
+        let successes = [r1.is_ok(), r2.is_ok()].iter().filter(|&&x| x).count();
+        let failures = [r1.is_err(), r2.is_err()].iter().filter(|&&x| x).count();
+
+        assert_eq!(successes, 1, "Itération {} : exactement 1 transaction concurrente doit réussir", i);
+        assert_eq!(failures, 1, "Itération {} : exactement 1 transaction concurrente doit échouer", i);
+
+        let err = if r1.is_err() {
+            r1.unwrap_err()
+        } else {
+            r2.unwrap_err()
         };
-        execute_create_rental(&p1, dto).await
-    });
 
-    let task2 = tokio::spawn(async move {
-        let dto = CreateRentalContractDto {
-            customer_id: "cli-002".to_string(),
-            utilisateur_id: None,
-            pickup_date: "2026-12-01".to_string(),
-            return_date_scheduled: "2026-12-05".to_string(),
-            event_date: None,
-            selected_variant_ids: vec!["var-009".to_string()],
-            quantity_items: None,
-            discount_cents: None,
-            deposit_method: "carte_bancaire".to_string(),
-            deposit_amount_cents: None,
-            paid_amount_cents: None,
-            payment_method: "carte_bancaire".to_string(),
-            notes: None,
-        };
-        execute_create_rental(&p2, dto).await
-    });
-
-    let (res1, res2) = tokio::join!(task1, task2);
-    let r1 = res1.unwrap();
-    let r2 = res2.unwrap();
-
-    let successes = [r1.is_ok(), r2.is_ok()].iter().filter(|&&x| x).count();
-    let failures = [r1.is_err(), r2.is_err()].iter().filter(|&&x| x).count();
-
-    assert_eq!(successes, 1, "Exactement 1 transaction concurrente doit réussir");
-    assert_eq!(failures, 1, "Exactement 1 transaction concurrente doit être rejetée proprement");
-
-    let err_str = if r1.is_err() {
-        r1.unwrap_err().to_string()
-    } else {
-        r2.unwrap_err().to_string()
-    };
-
-    // Vérifier que le rejet n'est pas une erreur SQLITE_BUSY brute
-    assert!(
-        err_str.contains("Conflit de date") || err_str.contains("occupée") || err_str.contains("Erreur de validation"),
-        "Le rejet doit être un message propre de validation/conflit, reçu: {}",
-        err_str
-    );
+        // B0-4 : Le perdant reçoit STRICTEMENT AppError::Validation (et jamais AppError::Busy)
+        match err {
+            costume_rental_lib::error::AppError::Validation(msg) => {
+                assert!(
+                    msg.contains("Conflit de date"),
+                    "Itération {} : le message de validation doit indiquer le conflit de dates : {}",
+                    i,
+                    msg
+                );
+            }
+            other => {
+                panic!(
+                    "Itération {} : Le perdant DOIT recevoir AppError::Validation, mais a reçu : {:?}",
+                    i,
+                    other
+                );
+            }
+        }
+    }
 
     (*pool).close().await;
     let _ = fs::remove_dir_all(&test_dir);
@@ -401,6 +431,112 @@ async fn test_migration_0006_fk_restrict_on_lignes_location() {
         "Aucune violation de clé étrangère n'est tolérée après migration 0006. Violations: {:?}",
         fk_violations
     );
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_recompute_variant_status_rules() {
+    let test_dir = std::env::temp_dir().join(format!("test_recompute_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+    let mut conn = pool.acquire().await.expect("Failed to acquire conn");
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // 1. Les statuts physiques (au_pressing, en_retouche, indisponible, vendu) ne doivent JAMAIS être écrasés
+    let physical_statuses = ["au_pressing", "en_retouche", "indisponible", "vendu"];
+    for (idx, &phys_stat) in physical_statuses.iter().enumerate() {
+        let v_id = format!("var-phys-{}", idx);
+        let barcode = format!("BAR-PHYS-{}", idx);
+        sqlx::query(
+            "INSERT INTO variantes_stock (id, article_id, code_barre, taille, statut, created_at, updated_at)
+             VALUES (?, 'art-001', ?, '50', ?, ?, ?)"
+        )
+        .bind(&v_id)
+        .bind(&barcode)
+        .bind(phys_stat)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let res = recompute_variant_status(&mut *conn, &v_id).await.unwrap();
+        assert_eq!(res, phys_stat, "Le statut physique '{}' doit être préservé sans modification", phys_stat);
+
+        let cur_stat: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = ?")
+            .bind(&v_id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(cur_stat.0, phys_stat, "Le statut en base pour '{}' ne doit pas changer", phys_stat);
+    }
+
+    // 2. Variante sans contrat actif : redevient 'disponible'
+    let v_free = "var-test-free";
+    sqlx::query(
+        "INSERT INTO variantes_stock (id, article_id, code_barre, taille, statut, created_at, updated_at)
+         VALUES (?, 'art-001', 'BAR-FREE-01', '52', 'reserve', ?, ?)"
+    )
+    .bind(v_free)
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+
+    let res_free = recompute_variant_status(&mut *conn, v_free).await.unwrap();
+    assert_eq!(res_free, "disponible", "Sans contrat actif, la pièce repasse en 'disponible'");
+
+    drop(conn);
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_mandatory_user_and_today_local() {
+    let test_dir = std::env::temp_dir().join(format!("test_user_today_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    // 1. Test de la fonction pure compute_contract_status_for_date
+    let today = today_local();
+    assert_eq!(compute_contract_status_for_date(&today, &today), "en_cours");
+    assert_eq!(compute_contract_status_for_date("2020-01-01", &today), "en_cours");
+    assert_eq!(compute_contract_status_for_date("2099-01-01", &today), "reserve");
+
+    // 2. Refus de création sans utilisateur (B0-6)
+    let dto_no_user = CreateRentalContractDto {
+        customer_id: "cli-001".to_string(),
+        utilisateur_id: None,
+        pickup_date: "2027-01-01".to_string(),
+        return_date_scheduled: "2027-01-05".to_string(),
+        event_date: None,
+        selected_variant_ids: vec!["var-001".to_string()],
+        quantity_items: None,
+        discount_cents: None,
+        deposit_method: "especes".to_string(),
+        deposit_amount_cents: None,
+        paid_amount_cents: None,
+        payment_method: "especes".to_string(),
+        notes: None,
+    };
+    let err1 = execute_create_rental(&pool, dto_no_user.clone()).await;
+    assert!(err1.is_err());
+    let msg1 = err1.unwrap_err().to_string();
+    assert!(msg1.contains("Utilisateur obligatoire"));
+
+    // 3. Refus avec un utilisateur inexistant
+    let mut dto_bad_user = dto_no_user;
+    dto_bad_user.utilisateur_id = Some("usr-inexistant".to_string());
+    let err2 = execute_create_rental(&pool, dto_bad_user).await;
+    assert!(err2.is_err());
+    let msg2 = err2.unwrap_err().to_string();
+    assert!(msg2.contains("Utilisateur introuvable"));
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);

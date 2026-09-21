@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { useRentalStore } from "@/store/rentalStore";
 import { useStockStore } from "@/store/stockStore";
 import { useClientStore } from "@/store/clientStore";
+import { useAuthStore, INITIAL_USERS } from "@/store/authStore";
 
 describe("Module D & C — Flux de Création de Location de Bout en Bout", () => {
   it("Vérifie la disponibilité d une variante et bloque si dates en conflit", () => {
@@ -122,9 +123,32 @@ describe("Module D & C — Flux de Création de Location de Bout en Bout", () =>
     expect(contractSameDay.total_amount_cents).toBe(basePrice * 1);
   });
 
+  it("En mode Tauri natif : rejette si aucun utilisateur n'est connecté", async () => {
+    const tauriModule = await import("@/services/tauri");
+    const isTauriSpy = vi.spyOn(tauriModule, "isTauri").mockReturnValue(true);
+    useAuthStore.setState({ currentUser: null, isAuthenticated: false });
+
+    await expect(
+      useRentalStore.getState().createRentalContract({
+        customer_id: "cli-001",
+        pickup_date: "2026-11-01",
+        return_date_scheduled: "2026-11-04",
+        selected_variant_ids: ["var-001"],
+        discount_cents: 0,
+        deposit_method: "cheque",
+        deposit_amount_cents: 50000,
+        paid_amount_cents: 5000,
+        payment_method: "carte_bancaire",
+      })
+    ).rejects.toThrow("Opération impossible : aucun utilisateur connecté");
+
+    isTauriSpy.mockRestore();
+  });
+
   it("En mode Tauri natif : invoque 'create_rental' via IPC sans fallback localStorage", async () => {
     const tauriModule = await import("@/services/tauri");
     const isTauriSpy = vi.spyOn(tauriModule, "isTauri").mockReturnValue(true);
+    useAuthStore.setState({ currentUser: INITIAL_USERS[0], isAuthenticated: true });
 
     const mockCreatedContract = {
       id: "loc-tauri-001",
@@ -170,6 +194,7 @@ describe("Module D & C — Flux de Création de Location de Bout en Bout", () =>
     expect(invokeSpy).toHaveBeenCalledWith("create_rental", expect.objectContaining({
       dto: expect.objectContaining({
         customer_id: "cli-001",
+        utilisateur_id: "usr-001",
         pickup_date: "2026-11-01",
         return_date_scheduled: "2026-11-04",
       }),
@@ -189,6 +214,7 @@ describe("Module D & C — Flux de Création de Location de Bout en Bout", () =>
   it("En mode Tauri natif : propage les erreurs de validation SQLite sans masquer ni repli localStorage", async () => {
     const tauriModule = await import("@/services/tauri");
     const isTauriSpy = vi.spyOn(tauriModule, "isTauri").mockReturnValue(true);
+    useAuthStore.setState({ currentUser: INITIAL_USERS[0], isAuthenticated: true });
     const invokeSpy = vi.spyOn(tauriModule, "invokeCommand").mockRejectedValue(
       new Error("Erreur de validation : Conflit de date pour Smoking Col Châle avec le contrat LOC-2026-0011")
     );

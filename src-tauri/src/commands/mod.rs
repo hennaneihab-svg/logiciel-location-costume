@@ -226,7 +226,7 @@ pub async fn delete_client(id: String, state: State<'_, DbState>) -> Result<(), 
 // 4. LOCATIONS & CONTRATS DE LOCATION
 // ----------------------------------------------------------------------------
 
-fn map_sqlite_err(e: sqlx::Error) -> AppError {
+pub fn map_sqlite_err(e: sqlx::Error) -> AppError {
     if let sqlx::Error::Database(ref db_err) = e {
         if let Some(code) = db_err.code() {
             if code == "5" || code == "6" || code == "517" || code == "261" {
@@ -239,6 +239,113 @@ fn map_sqlite_err(e: sqlx::Error) -> AppError {
         }
     }
     AppError::DatabaseError(e)
+}
+
+pub fn today_local() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}
+
+pub fn compute_contract_status_for_date(pickup_date: &str, today: &str) -> &'static str {
+    if pickup_date <= today {
+        "en_cours"
+    } else {
+        "reserve"
+    }
+}
+
+pub struct ImmediateTx {
+    pub conn: sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    committed: bool,
+}
+
+impl ImmediateTx {
+    pub async fn begin(pool: &sqlx::SqlitePool) -> Result<Self, AppError> {
+        let mut conn = pool.acquire().await.map_err(map_sqlite_err)?;
+        sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(map_sqlite_err)?;
+        Ok(Self {
+            conn,
+            committed: false,
+        })
+    }
+
+    pub async fn commit(mut self) -> Result<(), AppError> {
+        sqlx::query("COMMIT").execute(&mut *self.conn).await.map_err(map_sqlite_err)?;
+        self.committed = true;
+        Ok(())
+    }
+
+    pub async fn rollback(mut self) -> Result<(), AppError> {
+        if !self.committed {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *self.conn).await;
+            self.committed = true;
+        }
+        Ok(())
+    }
+}
+
+pub async fn recompute_variant_status(
+    conn: &mut sqlx::SqliteConnection,
+    variante_id: &str,
+) -> Result<String, AppError> {
+    use sqlx::Row;
+
+    let row = sqlx::query("SELECT statut FROM variantes_stock WHERE id = ?")
+        .bind(variante_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(map_sqlite_err)?
+        .ok_or_else(|| AppError::NotFound(format!("Variante introuvable : {}", variante_id)))?;
+
+    let current_statut: String = row.get("statut");
+
+    // Statuts physiques prioritaires et protégés : ne JAMAIS les écraser par un statut contractuel
+    if matches!(
+        current_statut.as_str(),
+        "au_pressing" | "en_retouche" | "indisponible" | "vendu"
+    ) {
+        return Ok(current_statut);
+    }
+
+    let today = today_local();
+
+    // Recherche de contrats actifs impliquant cette variante non encore rendue
+    let active_contracts = sqlx::query(
+        "SELECT l.statut, l.date_retrait_prevue
+         FROM lignes_location ll
+         JOIN locations l ON ll.location_id = l.id
+         WHERE ll.variante_id = ?
+           AND ll.est_rendu = 0
+           AND l.statut IN ('reserve', 'en_cours', 'en_retard', 'litige')
+         ORDER BY l.date_retrait_prevue ASC"
+    )
+    .bind(variante_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(map_sqlite_err)?;
+
+    let mut target_status = "disponible";
+    for ac in active_contracts {
+        let l_statut: String = ac.get("statut");
+        let date_retrait: String = ac.get("date_retrait_prevue");
+
+        if l_statut == "en_cours" || l_statut == "en_retard" || l_statut == "litige" || date_retrait <= today {
+            target_status = "en_location";
+            break;
+        } else if target_status != "en_location" {
+            target_status = "reserve";
+        }
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("UPDATE variantes_stock SET statut = ?, updated_at = ? WHERE id = ?")
+        .bind(target_status)
+        .bind(&now)
+        .bind(variante_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+    Ok(target_status.to_string())
 }
 
 pub async fn fetch_rental_dto_by_id(pool: &sqlx::SqlitePool, id: &str) -> Result<RentalContractDto, AppError> {
@@ -465,6 +572,12 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
         return Err(AppError::Validation("Veuillez sélectionner au moins un article pour le contrat".to_string()));
     }
 
+    let user_id = dto.utilisateur_id
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::Validation("Utilisateur obligatoire pour créer un contrat de location.".to_string()))?;
+
     let duration_days = match (
         chrono::NaiveDate::parse_from_str(&dto.pickup_date, "%Y-%m-%d"),
         chrono::NaiveDate::parse_from_str(&dto.return_date_scheduled, "%Y-%m-%d"),
@@ -473,15 +586,24 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
         _ => 1,
     };
 
-    let mut conn = pool.acquire().await.map_err(map_sqlite_err)?;
-    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(map_sqlite_err)?;
+    let mut tx = ImmediateTx::begin(pool).await?;
 
-    let result: Result<String, AppError> = async {
+    let loc_id = match async {
         use sqlx::Row;
+
+        let user_exists: Option<(String,)> = sqlx::query_as("SELECT id FROM utilisateurs WHERE id = ? AND est_actif = 1")
+            .bind(&user_id)
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+        if user_exists.is_none() {
+            return Err(AppError::Validation(format!("Utilisateur introuvable ou inactif : {}", user_id)));
+        }
 
         let client = sqlx::query_as::<_, Client>("SELECT * FROM clients WHERE id = ?")
             .bind(&dto.customer_id)
-            .fetch_optional(&mut *conn)
+            .fetch_optional(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?
             .ok_or_else(|| AppError::NotFound(format!("Client introuvable : {}", dto.customer_id)))?;
@@ -494,10 +616,8 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
         }
 
         let now = chrono::Utc::now().to_rfc3339();
-        let today_str = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let is_immediate = dto.pickup_date <= today_str;
-        let contract_status = if is_immediate { "en_cours" } else { "reserve" };
-        let variant_status_target = if is_immediate { "en_location" } else { "reserve" };
+        let today_str = today_local();
+        let contract_status = compute_contract_status_for_date(&dto.pickup_date, &today_str);
 
         let mut lines_to_insert = Vec::new();
         let mut total_rental_cents = 0i64;
@@ -513,7 +633,7 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
                  WHERE v.id = ?"
             )
             .bind(var_id)
-            .fetch_optional(&mut *conn)
+            .fetch_optional(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?
             .ok_or_else(|| AppError::Validation(format!("Variante introuvable : {}", var_id)))?;
@@ -529,7 +649,7 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
             if var_statut == "au_pressing" {
                 return Err(AppError::Validation(format!("L'article '{}' est actuellement au pressing (nettoyage).", art_nom)));
             }
-            if var_statut == "en_retouche" || var_statut == "indisponible" {
+            if var_statut == "en_retouche" || var_statut == "indisponible" || var_statut == "vendu" {
                 return Err(AppError::Validation(format!("L'article '{}' est en cours de réparation / indisponible.", art_nom)));
             }
 
@@ -548,7 +668,7 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
             .bind(var_id)
             .bind(&dto.return_date_scheduled)
             .bind(&dto.pickup_date)
-            .fetch_optional(&mut *conn)
+            .fetch_optional(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?;
 
@@ -563,14 +683,6 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
                     art_nom, num_loc, c_prenom, c_nom, c_start, c_end
                 )));
             }
-
-            sqlx::query("UPDATE variantes_stock SET statut = ?, updated_at = ? WHERE id = ?")
-                .bind(variant_status_target)
-                .bind(&now)
-                .bind(var_id)
-                .execute(&mut *conn)
-                .await
-                .map_err(map_sqlite_err)?;
 
             let item_total = prix_loc * duration_days;
             total_rental_cents += item_total;
@@ -599,7 +711,7 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
                      FROM articles WHERE id = ? AND est_actif = 1"
                 )
                 .bind(&q_item.article_id)
-                .fetch_optional(&mut *conn)
+                .fetch_optional(&mut *tx.conn)
                 .await
                 .map_err(map_sqlite_err)?
                 .ok_or_else(|| AppError::Validation(format!("Article introuvable : {}", q_item.article_id)))?;
@@ -618,7 +730,7 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
                 .bind(&now)
                 .bind(&q_item.article_id)
                 .bind(q_item.quantite)
-                .execute(&mut *conn)
+                .execute(&mut *tx.conn)
                 .await
                 .map_err(map_sqlite_err)?;
 
@@ -653,7 +765,7 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
             "INSERT OR IGNORE INTO app_meta (cle, valeur, updated_at) VALUES ('dernier_numero_location', '15', ?)"
         )
         .bind(&now)
-        .execute(&mut *conn)
+        .execute(&mut *tx.conn)
         .await
         .map_err(map_sqlite_err)?;
 
@@ -661,12 +773,12 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
             "UPDATE app_meta SET valeur = CAST(valeur AS INTEGER) + 1, updated_at = ? WHERE cle = 'dernier_numero_location'"
         )
         .bind(&now)
-        .execute(&mut *conn)
+        .execute(&mut *tx.conn)
         .await
         .map_err(map_sqlite_err)?;
 
         let meta_row: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'dernier_numero_location'")
-            .fetch_one(&mut *conn)
+            .fetch_one(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?;
 
@@ -675,7 +787,6 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
         let contract_number = format!("LOC-{}-{:04}", current_year, seq_num);
         let location_id = format!("loc-{}", chrono::Utc::now().timestamp_millis());
         let pdf_path = format!("/bons/{}/BON-{}.pdf", chrono::Utc::now().format("%Y-%m"), contract_number);
-        let user_id = dto.utilisateur_id.unwrap_or_else(|| "usr-001".to_string());
         let deposit_status = if dto.deposit_method == "empreinte_cb" {
             "empreinte_cb"
         } else if dto.deposit_method == "especes" {
@@ -713,7 +824,7 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
         .bind(&pdf_path)
         .bind(&now)
         .bind(&now)
-        .execute(&mut *conn)
+        .execute(&mut *tx.conn)
         .await
         .map_err(map_sqlite_err)?;
 
@@ -732,9 +843,14 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
             .bind(line.4)
             .bind(line.5)
             .bind(&line.6)
-            .execute(&mut *conn)
+            .execute(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?;
+        }
+
+        // Recalcul dynamique du statut de chaque variante selon la règle B0-2
+        for var_id in &dto.selected_variant_ids {
+            recompute_variant_status(&mut *tx.conn, var_id).await?;
         }
 
         if paid_cents > 0 {
@@ -753,24 +869,24 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
             .bind(pay_type)
             .bind(&dto.payment_method)
             .bind(&now)
-            .execute(&mut *conn)
+            .execute(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?;
         }
 
         Ok(location_id)
-    }.await;
-
-    match result {
-        Ok(loc_id) => {
-            sqlx::query("COMMIT").execute(&mut *conn).await.map_err(map_sqlite_err)?;
-            fetch_rental_dto_by_id(pool, &loc_id).await
+    }.await {
+        Ok(id) => {
+            tx.commit().await?;
+            id
         }
         Err(e) => {
-            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-            Err(e)
+            let _ = tx.rollback().await;
+            return Err(e);
         }
-    }
+    };
+
+    fetch_rental_dto_by_id(pool, &loc_id).await
 }
 
 #[command]
@@ -779,13 +895,13 @@ pub async fn create_rental(dto: CreateRentalContractDto, state: State<'_, DbStat
 }
 
 pub async fn execute_register_return(pool: &sqlx::SqlitePool, dto: RegisterReturnDto) -> Result<RentalContractDto, AppError> {
-    let mut conn = pool.acquire().await.map_err(map_sqlite_err)?;
-    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(map_sqlite_err)?;
+    let mut tx = ImmediateTx::begin(pool).await?;
 
-    let result: Result<(), AppError> = async {
+    let contract_id = dto.contract_id.clone();
+    match async {
         let loc = sqlx::query_as::<_, Location>("SELECT * FROM locations WHERE id = ?")
             .bind(&dto.contract_id)
-            .fetch_optional(&mut *conn)
+            .fetch_optional(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?
             .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", dto.contract_id)))?;
@@ -795,7 +911,7 @@ pub async fn execute_register_return(pool: &sqlx::SqlitePool, dto: RegisterRetur
         }
 
         let now = chrono::Utc::now().to_rfc3339();
-        let today_str = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let today_str = today_local();
 
         let mut total_damage_fee_cents = 0i64;
         let mut any_damage = false;
@@ -808,23 +924,40 @@ pub async fn execute_register_return(pool: &sqlx::SqlitePool, dto: RegisterRetur
             }
 
             if let Some(var_id) = &item.variant_id {
-                let new_stock_status = match item.condition.as_str() {
-                    "bon_etat" => "disponible",
-                    "a_nettoyer" => "au_pressing",
-                    _ => "en_retouche",
-                };
-
-                sqlx::query(
-                    "UPDATE variantes_stock 
-                     SET statut = ?, nb_locations = nb_locations + 1, updated_at = ? 
-                     WHERE id = ?"
-                )
-                .bind(new_stock_status)
-                .bind(&now)
-                .bind(var_id)
-                .execute(&mut *conn)
-                .await
-                .map_err(map_sqlite_err)?;
+                if item.condition == "a_nettoyer" {
+                    sqlx::query(
+                        "UPDATE variantes_stock 
+                         SET statut = 'au_pressing', nb_locations = nb_locations + 1, updated_at = ? 
+                         WHERE id = ?"
+                    )
+                    .bind(&now)
+                    .bind(var_id)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+                } else if item.condition == "endommage" {
+                    sqlx::query(
+                        "UPDATE variantes_stock 
+                         SET statut = 'en_retouche', nb_locations = nb_locations + 1, updated_at = ? 
+                         WHERE id = ?"
+                    )
+                    .bind(&now)
+                    .bind(var_id)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+                } else {
+                    sqlx::query(
+                        "UPDATE variantes_stock 
+                         SET nb_locations = nb_locations + 1, updated_at = ? 
+                         WHERE id = ?"
+                    )
+                    .bind(&now)
+                    .bind(var_id)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+                }
 
                 sqlx::query(
                     "UPDATE lignes_location 
@@ -836,16 +969,18 @@ pub async fn execute_register_return(pool: &sqlx::SqlitePool, dto: RegisterRetur
                 .bind(&item.damage_notes)
                 .bind(&dto.contract_id)
                 .bind(var_id)
-                .execute(&mut *conn)
+                .execute(&mut *tx.conn)
                 .await
                 .map_err(map_sqlite_err)?;
+
+                recompute_variant_status(&mut *tx.conn, var_id).await?;
             } else if let Some(art_id) = &item.article_id {
                 let row_q: Option<(i64,)> = sqlx::query_as(
                     "SELECT quantite FROM lignes_location WHERE location_id = ? AND article_id = ? AND est_rendu = 0 LIMIT 1"
                 )
                 .bind(&dto.contract_id)
                 .bind(art_id)
-                .fetch_optional(&mut *conn)
+                .fetch_optional(&mut *tx.conn)
                 .await
                 .map_err(map_sqlite_err)?;
 
@@ -856,7 +991,7 @@ pub async fn execute_register_return(pool: &sqlx::SqlitePool, dto: RegisterRetur
                     .bind(q)
                     .bind(&now)
                     .bind(art_id)
-                    .execute(&mut *conn)
+                    .execute(&mut *tx.conn)
                     .await
                     .map_err(map_sqlite_err)?;
 
@@ -868,7 +1003,7 @@ pub async fn execute_register_return(pool: &sqlx::SqlitePool, dto: RegisterRetur
                     .bind(&item.damage_notes)
                     .bind(&dto.contract_id)
                     .bind(art_id)
-                    .execute(&mut *conn)
+                    .execute(&mut *tx.conn)
                     .await
                     .map_err(map_sqlite_err)?;
                 }
@@ -898,23 +1033,22 @@ pub async fn execute_register_return(pool: &sqlx::SqlitePool, dto: RegisterRetur
         .bind(deposit_status)
         .bind(&now)
         .bind(&dto.contract_id)
-        .execute(&mut *conn)
+        .execute(&mut *tx.conn)
         .await
         .map_err(map_sqlite_err)?;
 
         Ok(())
-    }.await;
-
-    match result {
-        Ok(_) => {
-            sqlx::query("COMMIT").execute(&mut *conn).await.map_err(map_sqlite_err)?;
-            fetch_rental_dto_by_id(pool, &dto.contract_id).await
+    }.await {
+        Ok(()) => {
+            tx.commit().await?;
         }
         Err(e) => {
-            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-            Err(e)
+            let _ = tx.rollback().await;
+            return Err(e);
         }
-    }
+    };
+
+    fetch_rental_dto_by_id(pool, &contract_id).await
 }
 
 #[command]
@@ -923,13 +1057,12 @@ pub async fn register_return(dto: RegisterReturnDto, state: State<'_, DbState>) 
 }
 
 pub async fn execute_cancel_rental(pool: &sqlx::SqlitePool, id: &str) -> Result<RentalContractDto, AppError> {
-    let mut conn = pool.acquire().await.map_err(map_sqlite_err)?;
-    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(map_sqlite_err)?;
+    let mut tx = ImmediateTx::begin(pool).await?;
 
-    let result: Result<(), AppError> = async {
+    match async {
         let loc = sqlx::query_as::<_, Location>("SELECT * FROM locations WHERE id = ?")
-            .bind(&id)
-            .fetch_optional(&mut *conn)
+            .bind(id)
+            .fetch_optional(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?
             .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", id)))?;
@@ -946,55 +1079,57 @@ pub async fn execute_cancel_rental(pool: &sqlx::SqlitePool, id: &str) -> Result<
         let lines = sqlx::query(
             "SELECT variante_id, article_id, quantite FROM lignes_location WHERE location_id = ?"
         )
-        .bind(&id)
-        .fetch_all(&mut *conn)
+        .bind(id)
+        .fetch_all(&mut *tx.conn)
         .await
         .map_err(map_sqlite_err)?;
 
         use sqlx::Row;
-        for line in lines {
-            let var_id: Option<String> = line.get("variante_id");
+        for line in &lines {
             let art_id: Option<String> = line.get("article_id");
+            let var_id: Option<String> = line.get("variante_id");
             let qty: i64 = line.get("quantite");
 
-            if let Some(v_id) = var_id {
-                sqlx::query("UPDATE variantes_stock SET statut = 'disponible', updated_at = ? WHERE id = ? AND statut = 'reserve'")
-                    .bind(&now)
-                    .bind(&v_id)
-                    .execute(&mut *conn)
-                    .await
-                    .map_err(map_sqlite_err)?;
-            } else if let Some(a_id) = art_id {
-                sqlx::query("UPDATE articles SET quantite_disponible = quantite_disponible + ?, updated_at = ? WHERE id = ?")
-                    .bind(qty)
-                    .bind(&now)
-                    .bind(&a_id)
-                    .execute(&mut *conn)
-                    .await
-                    .map_err(map_sqlite_err)?;
+            if var_id.is_none() {
+                if let Some(a_id) = art_id {
+                    sqlx::query("UPDATE articles SET quantite_disponible = quantite_disponible + ?, updated_at = ? WHERE id = ?")
+                        .bind(qty)
+                        .bind(&now)
+                        .bind(&a_id)
+                        .execute(&mut *tx.conn)
+                        .await
+                        .map_err(map_sqlite_err)?;
+                }
             }
         }
 
         sqlx::query("UPDATE locations SET statut = 'annule', updated_at = ? WHERE id = ?")
             .bind(&now)
-            .bind(&id)
-            .execute(&mut *conn)
+            .bind(id)
+            .execute(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?;
 
-        Ok(())
-    }.await;
+        // Réévaluer le statut de chaque variante après annulation du contrat
+        for line in lines {
+            let var_id: Option<String> = line.get("variante_id");
+            if let Some(v_id) = var_id {
+                recompute_variant_status(&mut *tx.conn, &v_id).await?;
+            }
+        }
 
-    match result {
-        Ok(_) => {
-            sqlx::query("COMMIT").execute(&mut *conn).await.map_err(map_sqlite_err)?;
-            fetch_rental_dto_by_id(pool, id).await
+        Ok(())
+    }.await {
+        Ok(()) => {
+            tx.commit().await?;
         }
         Err(e) => {
-            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-            Err(e)
+            let _ = tx.rollback().await;
+            return Err(e);
         }
-    }
+    };
+
+    fetch_rental_dto_by_id(pool, id).await
 }
 
 #[command]
@@ -1646,11 +1781,44 @@ pub async fn restore_database(backup_path: String, app: tauri::AppHandle, state:
 
     state.pool.close().await;
 
-    // 5. Renommage atomique avec retry sur Windows : la base active n'est remplacée qu'après succès garanti de l'intégrité et fermeture des verrous
+    let backup_pre_restore = app_data_dir.join("costume_rental.db.pre-restore.bak");
+    let wal_path = app_data_dir.join("costume_rental.db-wal");
+    let shm_path = app_data_dir.join("costume_rental.db-shm");
+    let wal_bak = app_data_dir.join("costume_rental.db.pre-restore.bak-wal");
+    let shm_bak = app_data_dir.join("costume_rental.db.pre-restore.bak-shm");
+
+    // 5. Renommage de la base actuelle en .pre-restore.bak (ne JAMAIS supprimer avant que la nouvelle soit en place)
+    if db_path.exists() {
+        let mut backed_up = false;
+        for _ in 0..15 {
+            let _ = fs::remove_file(&backup_pre_restore);
+            if fs::rename(&db_path, &backup_pre_restore).is_ok() {
+                backed_up = true;
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        }
+
+        if !backed_up {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(AppError::Internal(
+                "Impossible de créer la sauvegarde de secours .pre-restore.bak de la base actuelle. Restauration annulée.".to_string()
+            ));
+        }
+
+        // Sauvegarde également des journaux WAL et SHM si existants
+        if wal_path.exists() {
+            let _ = fs::rename(&wal_path, &wal_bak);
+        }
+        if shm_path.exists() {
+            let _ = fs::rename(&shm_path, &shm_bak);
+        }
+    }
+
+    // 6. Renommage du fichier temporaire validé vers le nom de la base active
     let mut renamed = false;
     let mut last_err = None;
     for _ in 0..15 {
-        let _ = fs::remove_file(&db_path);
         match fs::rename(&tmp_path, &db_path) {
             Ok(_) => {
                 renamed = true;
@@ -1663,22 +1831,31 @@ pub async fn restore_database(backup_path: String, app: tauri::AppHandle, state:
         }
     }
 
+    // Garde de secours absolue : si le renommage de la nouvelle base échoue,
+    // on remet IMMÉDIATEMENT l'ancienne base en place !
     if !renamed {
         let _ = fs::remove_file(&tmp_path);
+        if backup_pre_restore.exists() {
+            let _ = fs::rename(&backup_pre_restore, &db_path);
+            if wal_bak.exists() {
+                let _ = fs::rename(&wal_bak, &wal_path);
+            }
+            if shm_bak.exists() {
+                let _ = fs::rename(&shm_bak, &shm_path);
+            }
+        }
         return Err(AppError::Internal(format!(
-            "Échec du remplacement atomique de la base SQLite : {}",
+            "Échec du remplacement atomique de la base SQLite : {}. L'ancienne base a été immédiatement rétablie.",
             last_err.map(|e| e.to_string()).unwrap_or_else(|| "Erreur inconnue".to_string())
         )));
     }
 
-    // 6. Nettoyage des journaux WAL et SHM obsolètes de l'ancienne base
-    let wal_path = app_data_dir.join("costume_rental.db-wal");
-    let shm_path = app_data_dir.join("costume_rental.db-shm");
+    // 7. Nettoyage des journaux résiduels de l'ancienne base (mais le .pre-restore.bak n'est JAMAIS supprimé automatiquement)
     if wal_path.exists() {
-        let _ = fs::remove_file(wal_path);
+        let _ = fs::remove_file(&wal_path);
     }
     if shm_path.exists() {
-        let _ = fs::remove_file(shm_path);
+        let _ = fs::remove_file(&shm_path);
     }
 
     Ok(())

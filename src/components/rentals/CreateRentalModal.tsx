@@ -15,6 +15,7 @@ import { formatCents, eurosToCents } from "@/lib/utils";
 import { useRentalStore } from "@/store/rentalStore";
 import { useClientStore } from "@/store/clientStore";
 import { useStockStore } from "@/store/stockStore";
+import { useAuthStore } from "@/store/authStore";
 import { QuickCreateClientModal } from "@/components/clients/QuickCreateClientModal";
 import { QrCameraScanner } from "@/components/common/QrCameraScanner";
 import { photoService } from "@/services/photoService";
@@ -275,6 +276,12 @@ export const CreateRentalModal: React.FC = () => {
 
   const handleSubmitContract = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const currentUser = useAuthStore.getState().currentUser;
+    if (!currentUser) {
+      toast.error("Opération impossible : aucun utilisateur connecté. Veuillez vous connecter.");
+      return;
+    }
 
     if (!selectedCustomerId) {
       toast.error("Veuillez sélectionner un client.");

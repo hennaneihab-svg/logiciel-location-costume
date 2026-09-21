@@ -23,26 +23,19 @@ pub async fn init_db(app_dir: &Path) -> Result<SqlitePool, AppError> {
     let db_path = app_dir.join("costume_rental.db");
     let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
 
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+    use std::str::FromStr;
+
+    let opts = SqliteConnectOptions::from_str(&db_url)
+        .map_err(AppError::DatabaseError)?
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .foreign_keys(true);
+
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .acquire_timeout(std::time::Duration::from_secs(10))
-        .connect(&db_url)
-        .await
-        .map_err(AppError::DatabaseError)?;
-
-    // Configuration des pragmas pour l'intégrité, la concurrence et la performance (WAL + busy_timeout)
-    sqlx::query("PRAGMA busy_timeout = 5000;")
-        .execute(&pool)
-        .await
-        .map_err(AppError::DatabaseError)?;
-
-    sqlx::query("PRAGMA foreign_keys = ON;")
-        .execute(&pool)
-        .await
-        .map_err(AppError::DatabaseError)?;
-
-    sqlx::query("PRAGMA journal_mode = WAL;")
-        .execute(&pool)
+        .connect_with(opts)
         .await
         .map_err(AppError::DatabaseError)?;
 

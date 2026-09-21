@@ -164,14 +164,20 @@ async fn test_backup_and_restore_cycle_with_pool_reconnect() {
         assert_eq!(check.0.to_lowercase(), "ok");
     }
 
-    // Checkpoint pool & rename atomique
+    // Checkpoint pool & rename atomique selon la règle B0-1
     let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE);").execute(&pool).await;
     pool.close().await; // Fermeture du pool actif
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
+    let backup_pre_restore = test_dir.join("costume_rental.db.pre-restore.bak");
+
+    // 1. Renommage de la base active en .pre-restore.bak (ne JAMAIS supprimer avant que la nouvelle soit en place)
+    fs::rename(&db_path, &backup_pre_restore).expect("Failed to rename current db to pre-restore.bak");
+    assert!(backup_pre_restore.exists(), ".pre-restore.bak DOIT exister");
+
+    // 2. Renommage du temporaire validé vers db_path
     let mut renamed = false;
     for _ in 0..20 {
-        let _ = fs::remove_file(&db_path);
         if fs::rename(&tmp_path, &db_path).is_ok() {
             renamed = true;
             break;
@@ -179,6 +185,9 @@ async fn test_backup_and_restore_cycle_with_pool_reconnect() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     assert!(renamed, "Failed to rename temp file to db_path on Windows");
+
+    // 3. Le .pre-restore.bak n'est JAMAIS supprimé automatiquement
+    assert!(backup_pre_restore.exists(), ".pre-restore.bak ne doit JAMAIS être supprimé automatiquement");
 
     // Suppression des anciens journaux WAL
     let _ = fs::remove_file(test_dir.join("costume_rental.db-wal"));

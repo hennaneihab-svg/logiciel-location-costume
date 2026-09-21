@@ -7,6 +7,7 @@ import type {
 } from "@/types/rental";
 import { useStockStore } from "@/store/stockStore";
 import { useClientStore } from "@/store/clientStore";
+import { useAuthStore } from "@/store/authStore";
 import { calculateRentalDays } from "@/lib/utils";
 import { invokeCommand, isTauri } from "@/services/tauri";
 
@@ -451,10 +452,16 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
   createRentalContract: async (input) => {
     // Mode natif Tauri : SQLite est l'unique source de vérité
     if (isTauri()) {
+      const currentUser = useAuthStore.getState().currentUser;
+      if (!currentUser) {
+        throw new Error("Opération impossible : aucun utilisateur connecté.");
+      }
+
       set({ isLoading: true });
       try {
         const dto = {
           customer_id: input.customer_id,
+          utilisateur_id: currentUser.id,
           pickup_date: input.pickup_date,
           return_date_scheduled: input.return_date_scheduled,
           event_date: input.event_date || null,
