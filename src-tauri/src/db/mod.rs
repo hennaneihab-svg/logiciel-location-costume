@@ -6,6 +6,7 @@ use crate::error::AppError;
 pub const MIGRATION_0001: &str = include_str!("../../migrations/0001_initial_schema.sql");
 pub const MIGRATION_0002: &str = include_str!("../../migrations/0002_seed_demo_data.sql");
 pub const MIGRATION_0003: &str = include_str!("../../migrations/0003_articles_mode_gestion_et_packs.sql");
+pub const MIGRATION_0004: &str = include_str!("../../migrations/0004_article_photos.sql");
 
 pub struct DbState {
     pub pool: SqlitePool,
@@ -126,6 +127,31 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
 
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (3, '0003_articles_mode_gestion_et_packs', ?)")
+            .bind(now)
+            .execute(pool)
+            .await
+            .map_err(AppError::DatabaseError)?;
+    }
+
+    // Migration 0004 (Article Photos)
+    let row4: Option<(i64,)> = sqlx::query_as("SELECT version FROM _migrations WHERE version = 4")
+        .fetch_optional(pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+    if row4.is_none() {
+        for statement in MIGRATION_0004.split(';') {
+            let stmt = statement.trim();
+            if !stmt.is_empty() {
+                sqlx::query(stmt)
+                    .execute(pool)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+            }
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (4, '0004_article_photos', ?)")
             .bind(now)
             .execute(pool)
             .await
