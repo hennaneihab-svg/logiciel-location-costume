@@ -234,7 +234,7 @@ async fn test_concurrent_rental_creation_atomicity() {
         err_str
     );
 
-    pool.close().await;
+    (*pool).close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
 

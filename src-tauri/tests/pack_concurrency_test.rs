@@ -1,4 +1,4 @@
-﻿use costume_rental_lib::db;
+use costume_rental_lib::db;
 use std::fs;
 use std::sync::Arc;
 
@@ -104,7 +104,7 @@ async fn test_concurrent_pack_reservation() {
     // 5. Vérifier que la base est à 0 (pas -1)
     let qty: (i64,) = sqlx::query_as("SELECT quantite_disponible FROM articles WHERE id = ?")
         .bind(art_id)
-        .fetch_one(&**pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
