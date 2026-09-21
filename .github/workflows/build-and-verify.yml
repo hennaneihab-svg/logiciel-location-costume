@@ -54,7 +54,7 @@ jobs:
       - name: Run Pack Concurrency Test (Rust)
         run: cargo test --manifest-path src-tauri/Cargo.toml --test pack_concurrency_test -- --nocapture
 
-      - name: Run Rental SQLite Tests (Rust)
+      - name: Run Rental SQLite & Migration 0006 FK Restrict Tests (Rust)
         run: cargo test --manifest-path src-tauri/Cargo.toml --test rental_sqlite_test -- --nocapture
 
       - name: Build Tauri Binary & Bundle

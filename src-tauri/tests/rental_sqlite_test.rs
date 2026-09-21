@@ -281,3 +281,128 @@ async fn test_register_return_and_cancel_lifecycle() {
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[tokio::test]
+async fn test_migration_0006_fk_restrict_on_lignes_location() {
+    let test_dir = std::env::temp_dir().join(format!("test_migration_0006_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    // 1. Vérification que la version 6 est bien appliquée
+    let version: (i64,) = sqlx::query_as("SELECT MAX(version) FROM _migrations")
+        .fetch_one(&pool)
+        .await
+        .expect("Failed to get migration version");
+    assert!(version.0 >= 6, "La version de migration doit être au moins 6");
+
+    // 2. Vérification des colonnes de ventilation dans sessions_caisse (R10)
+    let session_check = sqlx::query(
+        "SELECT total_especes_centimes, total_carte_centimes, total_cheque_centimes, total_virement_centimes FROM sessions_caisse LIMIT 1"
+    )
+    .fetch_optional(&pool)
+    .await;
+    assert!(session_check.is_ok(), "Les colonnes de ventilation doivent exister dans sessions_caisse");
+
+    // 3. Insérer un contrat de test avec 2 lignes : une avec variante_id, une avec article_id (quantité)
+    let now = chrono::Utc::now().to_rfc3339();
+    let loc_test_id = "loc-test-mig0006";
+    sqlx::query(
+        "INSERT INTO locations (
+            id, numero_location, client_id, utilisateur_id, statut,
+            date_retrait_prevue, date_retour_prevue, montant_total_ht_centimes,
+            tva_taux, montant_total_ttc_centimes, montant_caution_centimes, statut_caution,
+            created_at, updated_at
+        ) VALUES (?, 'LOC-2026-9999', 'cli-001', 'usr-001', 'en_cours', '2026-11-01', '2026-11-05', 30000, 0, 30000, 50000, 'empreinte_cb', ?, ?)"
+    )
+    .bind(loc_test_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Failed to insert test location");
+
+    // Ligne 1 : liée à la variante 'var-003'
+    sqlx::query(
+        "INSERT INTO lignes_location (
+            id, location_id, variante_id, article_id, quantite, type_ligne,
+            prix_unitaire_centimes, caution_centimes, est_rendu
+        ) VALUES ('lig-test-var', ?, 'var-003', NULL, 1, 'location', 15000, 25000, 0)"
+    )
+    .bind(loc_test_id)
+    .execute(&pool)
+    .await
+    .expect("Failed to insert variant line");
+
+    // Ligne 2 : liée à l'article 'art-004' en mode quantité
+    sqlx::query(
+        "INSERT INTO lignes_location (
+            id, location_id, variante_id, article_id, quantite, type_ligne,
+            prix_unitaire_centimes, caution_centimes, est_rendu
+        ) VALUES ('lig-test-art', ?, NULL, 'art-004', 2, 'location', 7500, 12500, 0)"
+    )
+    .bind(loc_test_id)
+    .execute(&pool)
+    .await
+    .expect("Failed to insert quantity article line");
+
+    // 4. Tester ON DELETE RESTRICT sur variante_id
+    let del_var_res = sqlx::query("DELETE FROM variantes_stock WHERE id = 'var-003'")
+        .execute(&pool)
+        .await;
+    assert!(
+        del_var_res.is_err(),
+        "La suppression d'une variante référencée par une ligne_location DOIT être REFUSÉE (ON DELETE RESTRICT)"
+    );
+    let var_err = del_var_res.unwrap_err().to_string();
+    assert!(
+        var_err.to_lowercase().contains("foreign key") || var_err.contains("2067") || var_err.contains("787"),
+        "L'erreur doit être une violation de clé étrangère, reçu: {}",
+        var_err
+    );
+
+    // 5. Tester ON DELETE RESTRICT sur article_id
+    let del_art_res = sqlx::query("DELETE FROM articles WHERE id = 'art-004'")
+        .execute(&pool)
+        .await;
+    assert!(
+        del_art_res.is_err(),
+        "La suppression d'un article référencé par une ligne_location DOIT être REFUSÉE (ON DELETE RESTRICT)"
+    );
+    let art_err = del_art_res.unwrap_err().to_string();
+    assert!(
+        art_err.to_lowercase().contains("foreign key") || art_err.contains("2067") || art_err.contains("787"),
+        "L'erreur doit être une violation de clé étrangère, reçu: {}",
+        art_err
+    );
+
+    // 6. Tester la contrainte CHECK : variante_id et article_id simultanément NULL doit être refusé
+    let bad_line_res = sqlx::query(
+        "INSERT INTO lignes_location (
+            id, location_id, variante_id, article_id, quantite, type_ligne,
+            prix_unitaire_centimes, caution_centimes, est_rendu
+        ) VALUES ('lig-bad', ?, NULL, NULL, 1, 'location', 1000, 0, 0)"
+    )
+    .bind(loc_test_id)
+    .execute(&pool)
+    .await;
+    assert!(
+        bad_line_res.is_err(),
+        "Une ligne sans variante_id NI article_id DOIT violer le CHECK chk_ligne_item"
+    );
+
+    // 7. Vérification finale PRAGMA foreign_key_check
+    let fk_violations: Vec<(String, Option<i64>, String, i64)> = sqlx::query_as("PRAGMA foreign_key_check;")
+        .fetch_all(&pool)
+        .await
+        .expect("PRAGMA foreign_key_check failed");
+    assert!(
+        fk_violations.is_empty(),
+        "Aucune violation de clé étrangère n'est tolérée après migration 0006. Violations: {:?}",
+        fk_violations
+    );
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+

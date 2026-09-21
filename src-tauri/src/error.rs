@@ -12,6 +12,9 @@ pub enum AppError {
     #[error("Erreur de validation : {0}")]
     Validation(String),
 
+    #[error("Base occupée : {0}")]
+    Busy(String),
+
     #[error("Erreur interne : {0}")]
     Internal(String),
 }

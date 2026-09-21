@@ -230,12 +230,12 @@ fn map_sqlite_err(e: sqlx::Error) -> AppError {
     if let sqlx::Error::Database(ref db_err) = e {
         if let Some(code) = db_err.code() {
             if code == "5" || code == "6" || code == "517" || code == "261" {
-                return AppError::Validation("La ressource demandée est actuellement occupée par une autre opération. Veuillez réessayer.".to_string());
+                return AppError::Busy("La base de données est actuellement occupée par une autre opération. Veuillez réessayer dans un instant.".to_string());
             }
         }
         let msg = db_err.message().to_lowercase();
         if msg.contains("database is locked") || msg.contains("busy") {
-            return AppError::Validation("La ressource demandée est actuellement occupée par une autre opération. Veuillez réessayer.".to_string());
+            return AppError::Busy("La base de données est actuellement occupée par une autre opération. Veuillez réessayer dans un instant.".to_string());
         }
     }
     AppError::DatabaseError(e)
