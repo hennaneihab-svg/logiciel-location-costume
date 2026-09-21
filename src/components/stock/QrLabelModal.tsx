@@ -35,8 +35,9 @@ export const QrLabelModal: React.FC = () => {
       });
 
       QRCode.toDataURL(payload, {
-        width: 240,
-        margin: 1,
+        width: 280,
+        margin: 2, // Marge blanche de sécurité (quiet zone)
+        errorCorrectionLevel: "M", // Niveau de correction d'erreur M (15% de redondance)
         color: {
           dark: "#000000",
           light: "#ffffff",
