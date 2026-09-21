@@ -391,7 +391,7 @@ pub async fn fetch_rental_dto_by_id(pool: &sqlx::SqlitePool, id: &str) -> Result
     let remaining_amount_cents = (total_amount_cents - paid_amount_cents).max(0);
     let deposit_method = if deposit_status == "empreinte_cb" {
         "empreinte_cb".to_string()
-    } else if deposit_status == "especes" {
+    } else if deposit_status == "encaissee" || deposit_status == "especes" {
         "especes".to_string()
     } else if deposit_status == "virement" {
         "virement".to_string()
@@ -454,8 +454,7 @@ pub async fn get_rental(id: String, state: State<'_, DbState>) -> Result<RentalC
     fetch_rental_dto_by_id(&state.pool, &id).await
 }
 
-#[command]
-pub async fn create_rental(dto: CreateRentalContractDto, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
+pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalContractDto) -> Result<RentalContractDto, AppError> {
     if dto.pickup_date.trim().is_empty() || dto.return_date_scheduled.trim().is_empty() {
         return Err(AppError::Validation("Les dates de retrait et de retour sont obligatoires".to_string()));
     }
@@ -474,7 +473,7 @@ pub async fn create_rental(dto: CreateRentalContractDto, state: State<'_, DbStat
         _ => 1,
     };
 
-    let mut conn = state.pool.acquire().await.map_err(map_sqlite_err)?;
+    let mut conn = pool.acquire().await.map_err(map_sqlite_err)?;
     sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(map_sqlite_err)?;
 
     let result: Result<String, AppError> = async {
@@ -680,7 +679,7 @@ pub async fn create_rental(dto: CreateRentalContractDto, state: State<'_, DbStat
         let deposit_status = if dto.deposit_method == "empreinte_cb" {
             "empreinte_cb"
         } else if dto.deposit_method == "especes" {
-            "especes"
+            "encaissee"
         } else {
             "cheque_retenu"
         };
@@ -765,7 +764,7 @@ pub async fn create_rental(dto: CreateRentalContractDto, state: State<'_, DbStat
     match result {
         Ok(loc_id) => {
             sqlx::query("COMMIT").execute(&mut *conn).await.map_err(map_sqlite_err)?;
-            fetch_rental_dto_by_id(&state.pool, &loc_id).await
+            fetch_rental_dto_by_id(pool, &loc_id).await
         }
         Err(e) => {
             let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
@@ -775,8 +774,12 @@ pub async fn create_rental(dto: CreateRentalContractDto, state: State<'_, DbStat
 }
 
 #[command]
-pub async fn register_return(dto: RegisterReturnDto, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
-    let mut conn = state.pool.acquire().await.map_err(map_sqlite_err)?;
+pub async fn create_rental(dto: CreateRentalContractDto, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
+    execute_create_rental(&state.pool, dto).await
+}
+
+pub async fn execute_register_return(pool: &sqlx::SqlitePool, dto: RegisterReturnDto) -> Result<RentalContractDto, AppError> {
+    let mut conn = pool.acquire().await.map_err(map_sqlite_err)?;
     sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(map_sqlite_err)?;
 
     let result: Result<(), AppError> = async {
@@ -905,7 +908,7 @@ pub async fn register_return(dto: RegisterReturnDto, state: State<'_, DbState>) 
     match result {
         Ok(_) => {
             sqlx::query("COMMIT").execute(&mut *conn).await.map_err(map_sqlite_err)?;
-            fetch_rental_dto_by_id(&state.pool, &dto.contract_id).await
+            fetch_rental_dto_by_id(pool, &dto.contract_id).await
         }
         Err(e) => {
             let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
@@ -915,8 +918,12 @@ pub async fn register_return(dto: RegisterReturnDto, state: State<'_, DbState>) 
 }
 
 #[command]
-pub async fn cancel_rental(id: String, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
-    let mut conn = state.pool.acquire().await.map_err(map_sqlite_err)?;
+pub async fn register_return(dto: RegisterReturnDto, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
+    execute_register_return(&state.pool, dto).await
+}
+
+pub async fn execute_cancel_rental(pool: &sqlx::SqlitePool, id: &str) -> Result<RentalContractDto, AppError> {
+    let mut conn = pool.acquire().await.map_err(map_sqlite_err)?;
     sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(map_sqlite_err)?;
 
     let result: Result<(), AppError> = async {
@@ -981,13 +988,18 @@ pub async fn cancel_rental(id: String, state: State<'_, DbState>) -> Result<Rent
     match result {
         Ok(_) => {
             sqlx::query("COMMIT").execute(&mut *conn).await.map_err(map_sqlite_err)?;
-            fetch_rental_dto_by_id(&state.pool, &id).await
+            fetch_rental_dto_by_id(pool, id).await
         }
         Err(e) => {
             let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
             Err(e)
         }
     }
+}
+
+#[command]
+pub async fn cancel_rental(id: String, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
+    execute_cancel_rental(&state.pool, &id).await
 }
 
 // Commandes historiques conservées pour rétrocompatibilité
@@ -1191,8 +1203,8 @@ pub async fn get_dashboard_stats(state: State<'_, DbState>) -> Result<DashboardK
 #[command]
 pub async fn get_full_dashboard_stats(
     periode: Option<String>,
-    date_debut: Option<String>,
-    date_fin: Option<String>,
+    _date_debut: Option<String>,
+    _date_fin: Option<String>,
     state: State<'_, DbState>,
 ) -> Result<FullDashboardStats, AppError> {
     let mode = periode.unwrap_or_else(|| "mois".to_string());
@@ -1634,12 +1646,30 @@ pub async fn restore_database(backup_path: String, app: tauri::AppHandle, state:
 
     state.pool.close().await;
 
-    // 5. Renommage atomique : la base active n'est remplacée qu'après succès garanti de l'intégrité et fermeture des verrous
-    fs::rename(&tmp_path, &db_path)
-        .map_err(|e| {
-            let _ = fs::remove_file(&tmp_path);
-            AppError::Internal(format!("Échec du remplacement atomique de la base SQLite : {}", e))
-        })?;
+    // 5. Renommage atomique avec retry sur Windows : la base active n'est remplacée qu'après succès garanti de l'intégrité et fermeture des verrous
+    let mut renamed = false;
+    let mut last_err = None;
+    for _ in 0..15 {
+        let _ = fs::remove_file(&db_path);
+        match fs::rename(&tmp_path, &db_path) {
+            Ok(_) => {
+                renamed = true;
+                break;
+            }
+            Err(e) => {
+                last_err = Some(e);
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            }
+        }
+    }
+
+    if !renamed {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(AppError::Internal(format!(
+            "Échec du remplacement atomique de la base SQLite : {}",
+            last_err.map(|e| e.to_string()).unwrap_or_else(|| "Erreur inconnue".to_string())
+        )));
+    }
 
     // 6. Nettoyage des journaux WAL et SHM obsolètes de l'ancienne base
     let wal_path = app_data_dir.join("costume_rental.db-wal");

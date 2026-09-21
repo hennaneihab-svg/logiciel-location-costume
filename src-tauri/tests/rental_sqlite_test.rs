@@ -4,6 +4,7 @@ use costume_rental_lib::commands::*;
 use std::fs;
 use std::sync::Arc;
 
+
 #[tokio::test]
 async fn test_migration_0005_and_fk_integrity() {
     let test_dir = std::env::temp_dir().join(format!("test_migration_0005_{}", chrono::Utc::now().timestamp_micros()));
@@ -75,9 +76,8 @@ async fn test_create_rental_contract_and_numbering() {
         notes: Some("Test création contrat avec acompte".to_string()),
     };
 
-    // Appel direct avec l'émulation State ou via pool (ici on teste la logique de création transactionnelle)
-    let state = tauri::State::from(Box::leak(Box::new(db::DbState { pool: pool.clone() })));
-    let created = create_rental(dto, state)
+    // Appel direct avec la fonction métier transactionnelle
+    let created = execute_create_rental(&pool, dto)
         .await
         .expect("Échec de création du contrat de location");
 
@@ -109,7 +109,6 @@ async fn test_date_collision_and_stock_rollback() {
     fs::create_dir_all(&test_dir).expect("Failed to create test dir");
 
     let pool = db::init_db(&test_dir).await.expect("Failed to init db");
-    let state = tauri::State::from(Box::leak(Box::new(db::DbState { pool: pool.clone() })));
 
     // 1. Créer une réservation du 2026-11-01 au 2026-11-05 pour var-001
     let dto1 = CreateRentalContractDto {
@@ -128,7 +127,7 @@ async fn test_date_collision_and_stock_rollback() {
         notes: None,
     };
 
-    let res1 = create_rental(dto1, state).await;
+    let res1 = execute_create_rental(&pool, dto1).await;
     assert!(res1.is_ok(), "Premier contrat doit réussir");
 
     // 2. Tenter une réservation chevauchante du 2026-11-03 au 2026-11-08 pour la même var-001
@@ -148,7 +147,7 @@ async fn test_date_collision_and_stock_rollback() {
         notes: None,
     };
 
-    let res2 = create_rental(dto2, state).await;
+    let res2 = execute_create_rental(&pool, dto2).await;
     assert!(res2.is_err(), "La seconde réservation DOIT échouer pour conflit de dates");
     let err_msg = res2.unwrap_err().to_string();
     assert!(err_msg.contains("Conflit de date"), "L'erreur doit mentionner le conflit de dates : {}", err_msg);
@@ -172,7 +171,6 @@ async fn test_concurrent_rental_creation_atomicity() {
     let p2 = Arc::clone(&pool);
 
     let task1 = tokio::spawn(async move {
-        let state = tauri::State::from(Box::leak(Box::new(db::DbState { pool: (*p1).clone() })));
         let dto = CreateRentalContractDto {
             customer_id: "cli-001".to_string(),
             utilisateur_id: None,
@@ -188,11 +186,10 @@ async fn test_concurrent_rental_creation_atomicity() {
             payment_method: "especes".to_string(),
             notes: None,
         };
-        create_rental(dto, state).await
+        execute_create_rental(&p1, dto).await
     });
 
     let task2 = tokio::spawn(async move {
-        let state = tauri::State::from(Box::leak(Box::new(db::DbState { pool: (*p2).clone() })));
         let dto = CreateRentalContractDto {
             customer_id: "cli-002".to_string(),
             utilisateur_id: None,
@@ -208,7 +205,7 @@ async fn test_concurrent_rental_creation_atomicity() {
             payment_method: "carte_bancaire".to_string(),
             notes: None,
         };
-        create_rental(dto, state).await
+        execute_create_rental(&p2, dto).await
     });
 
     let (res1, res2) = tokio::join!(task1, task2);
@@ -244,7 +241,6 @@ async fn test_register_return_and_cancel_lifecycle() {
     fs::create_dir_all(&test_dir).expect("Failed to create test dir");
 
     let pool = db::init_db(&test_dir).await.expect("Failed to init db");
-    let state = tauri::State::from(Box::leak(Box::new(db::DbState { pool: pool.clone() })));
 
     // 1. Tester le retour avec dégradations sur le contrat en cours loc-012 (Richelieu 43)
     let return_dto = RegisterReturnDto {
@@ -258,7 +254,7 @@ async fn test_register_return_and_cancel_lifecycle() {
         }],
     };
 
-    let returned = register_return(return_dto, state).await.expect("Échec de l'enregistrement de retour");
+    let returned = execute_register_return(&pool, return_dto).await.expect("Échec de l'enregistrement de retour");
 
     assert_eq!(returned.status, "litige", "Un retour avec dégradation doit passer en 'litige'");
     assert_eq!(returned.damage_fee_cents, 3000);
@@ -272,7 +268,7 @@ async fn test_register_return_and_cancel_lifecycle() {
     assert_eq!(var_row.0, "en_retouche");
 
     // 2. Tester l'annulation du contrat réservé loc-014 (var-005)
-    let cancelled = cancel_rental("loc-014".to_string(), state).await.expect("Échec d'annulation du contrat");
+    let cancelled = execute_cancel_rental(&pool, "loc-014").await.expect("Échec d'annulation du contrat");
     assert_eq!(cancelled.status, "annule");
 
     // Vérifier que la variante var-005 a été remise en 'disponible'

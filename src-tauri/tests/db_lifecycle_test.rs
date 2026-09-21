@@ -66,7 +66,7 @@ async fn test_persistence_across_db_reconnect() {
 
 #[tokio::test]
 async fn test_backup_and_restore_cycle_with_pool_reconnect() {
-    use std::io::{Read, Write};
+    use std::io::Write;
 
     let test_dir = std::env::temp_dir().join(format!("test_atelier_backup_{}", chrono::Utc::now().timestamp_micros()));
     fs::create_dir_all(&test_dir).expect("Failed to create test dir");
@@ -167,8 +167,18 @@ async fn test_backup_and_restore_cycle_with_pool_reconnect() {
     // Checkpoint pool & rename atomique
     let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE);").execute(&pool).await;
     pool.close().await; // Fermeture du pool actif
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    fs::rename(&tmp_path, &db_path).unwrap();
+    let mut renamed = false;
+    for _ in 0..20 {
+        let _ = fs::remove_file(&db_path);
+        if fs::rename(&tmp_path, &db_path).is_ok() {
+            renamed = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(renamed, "Failed to rename temp file to db_path on Windows");
 
     // Suppression des anciens journaux WAL
     let _ = fs::remove_file(test_dir.join("costume_rental.db-wal"));
