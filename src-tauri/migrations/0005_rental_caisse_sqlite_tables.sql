@@ -43,6 +43,10 @@ SELECT
     est_rendu, date_retour, notes
 FROM lignes_location;
 
+DROP INDEX IF EXISTS idx_lignes_loc_variante;
+DROP INDEX IF EXISTS idx_lignes_loc_location;
+DROP INDEX IF EXISTS idx_lignes_loc_article;
+
 DROP TABLE IF EXISTS lignes_location;
 ALTER TABLE lignes_location_new RENAME TO lignes_location;
 

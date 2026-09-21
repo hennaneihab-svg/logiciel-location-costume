@@ -172,20 +172,25 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
         .map_err(AppError::DatabaseError)?;
 
     if row5.is_none() {
+        let mut conn = pool.acquire().await.map_err(AppError::DatabaseError)?;
+        sqlx::query("PRAGMA foreign_keys = OFF;").execute(&mut *conn).await.map_err(AppError::DatabaseError)?;
+
         for statement in MIGRATION_0005.split(';') {
             let stmt = statement.trim();
             if !stmt.is_empty() {
                 sqlx::query(stmt)
-                    .execute(pool)
+                    .execute(&mut *conn)
                     .await
                     .map_err(AppError::DatabaseError)?;
             }
         }
 
+        sqlx::query("PRAGMA foreign_keys = ON;").execute(&mut *conn).await.map_err(AppError::DatabaseError)?;
+
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (5, '0005_rental_caisse_sqlite_tables', ?)")
             .bind(now)
-            .execute(pool)
+            .execute(&mut *conn)
             .await
             .map_err(AppError::DatabaseError)?;
     }
