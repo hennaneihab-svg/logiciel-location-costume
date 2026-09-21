@@ -180,7 +180,9 @@ pub struct CreateLocationDto {
 pub struct LigneLocation {
     pub id: String,
     pub location_id: String,
-    pub variante_id: String,
+    pub variante_id: Option<String>,
+    pub article_id: Option<String>,
+    pub quantite: i64,
     pub type_ligne: String,
     pub prix_unitaire_centimes: i64,
     pub caution_centimes: i64,
@@ -189,6 +191,105 @@ pub struct LigneLocation {
     pub est_rendu: i64,
     pub date_retour: Option<String>,
     pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RentalArticleItemDto {
+    pub variant_id: String,
+    pub article_id: String,
+    pub article_name: String,
+    pub reference: String,
+    pub barcode: String,
+    pub size: String,
+    pub sub_size: Option<String>,
+    pub unit_price_cents: i64,
+    pub deposit_cents: i64,
+    pub cleaning_fee_cents: i64,
+    pub pickup_condition: String,
+    pub return_condition: Option<String>,
+    pub damage_fee_cents: Option<i64>,
+    pub damage_notes: Option<String>,
+    pub is_returned: bool,
+    pub return_date: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RentalContractDto {
+    pub id: String,
+    pub contract_number: String,
+    pub customer_id: String,
+    pub customer_name: String,
+    pub customer_phone: String,
+    pub customer_email: Option<String>,
+    pub customer_address: Option<String>,
+    pub customer_cni: Option<String>,
+
+    pub status: String,
+    pub event_date: Option<String>,
+    pub pickup_date: String,
+    pub return_date_scheduled: String,
+    pub return_date_actual: Option<String>,
+
+    pub items: Vec<RentalArticleItemDto>,
+
+    pub total_rental_cents: i64,
+    pub cleaning_fee_cents: i64,
+    pub discount_cents: i64,
+    pub late_fee_cents: i64,
+    pub damage_fee_cents: i64,
+    pub total_amount_cents: i64,
+
+    pub deposit_amount_cents: i64,
+    pub deposit_status: String,
+    pub deposit_method: String,
+    pub deposit_notes: Option<String>,
+
+    pub paid_amount_cents: i64,
+    pub payment_method: String,
+    pub remaining_amount_cents: i64,
+
+    pub notes: Option<String>,
+    pub pdf_archived_path: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RentalQuantityItemInput {
+    pub article_id: String,
+    pub quantite: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateRentalContractDto {
+    pub customer_id: String,
+    pub utilisateur_id: Option<String>,
+    pub pickup_date: String,
+    pub return_date_scheduled: String,
+    pub event_date: Option<String>,
+    pub selected_variant_ids: Vec<String>,
+    pub quantity_items: Option<Vec<RentalQuantityItemInput>>,
+    pub discount_cents: Option<i64>,
+    pub deposit_method: String,
+    pub deposit_amount_cents: Option<i64>,
+    pub paid_amount_cents: Option<i64>,
+    pub payment_method: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReturnItemInputDto {
+    pub variant_id: Option<String>,
+    pub article_id: Option<String>,
+    pub condition: String,
+    pub damage_fee_cents: Option<i64>,
+    pub damage_notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RegisterReturnDto {
+    pub contract_id: String,
+    pub items: Vec<ReturnItemInputDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

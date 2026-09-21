@@ -7,6 +7,7 @@ import type {
   Payment,
   ReturnAlert,
 } from "@/types";
+import type { RentalContract } from "@/types/rental";
 
 // ============================================================================
 // INTERFACES DTOs TYPESCRIPT
@@ -307,6 +308,41 @@ export const locationService = {
     if (isTauri()) {
       return await invokeCommand<void>("update_location_statut", { id, statut });
     }
+  },
+
+  async listRentals(): Promise<RentalContract[]> {
+    if (isTauri()) {
+      return await invokeCommand<RentalContract[]>("list_rentals");
+    }
+    return [];
+  },
+
+  async getRental(id: string): Promise<RentalContract> {
+    if (isTauri()) {
+      return await invokeCommand<RentalContract>("get_rental", { id });
+    }
+    throw new Error(`Location introuvable : ${id}`);
+  },
+
+  async createRental(dto: unknown): Promise<RentalContract> {
+    if (isTauri()) {
+      return await invokeCommand<RentalContract>("create_rental", { dto });
+    }
+    throw new Error("Mode Tauri requis pour createRental");
+  },
+
+  async registerReturn(dto: unknown): Promise<RentalContract> {
+    if (isTauri()) {
+      return await invokeCommand<RentalContract>("register_return", { dto });
+    }
+    throw new Error("Mode Tauri requis pour registerReturn");
+  },
+
+  async cancelRental(id: string): Promise<RentalContract> {
+    if (isTauri()) {
+      return await invokeCommand<RentalContract>("cancel_rental", { id });
+    }
+    throw new Error("Mode Tauri requis pour cancelRental");
   },
 };
 

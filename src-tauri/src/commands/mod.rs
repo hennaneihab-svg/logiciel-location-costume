@@ -223,8 +223,774 @@ pub async fn delete_client(id: String, state: State<'_, DbState>) -> Result<(), 
 }
 
 // ----------------------------------------------------------------------------
-// 4. LOCATIONS
+// 4. LOCATIONS & CONTRATS DE LOCATION
 // ----------------------------------------------------------------------------
+
+fn map_sqlite_err(e: sqlx::Error) -> AppError {
+    if let sqlx::Error::Database(ref db_err) = e {
+        if let Some(code) = db_err.code() {
+            if code == "5" || code == "6" || code == "517" || code == "261" {
+                return AppError::Validation("La ressource demandée est actuellement occupée par une autre opération. Veuillez réessayer.".to_string());
+            }
+        }
+        let msg = db_err.message().to_lowercase();
+        if msg.contains("database is locked") || msg.contains("busy") {
+            return AppError::Validation("La ressource demandée est actuellement occupée par une autre opération. Veuillez réessayer.".to_string());
+        }
+    }
+    AppError::DatabaseError(e)
+}
+
+pub async fn fetch_rental_dto_by_id(pool: &sqlx::SqlitePool, id: &str) -> Result<RentalContractDto, AppError> {
+    use sqlx::Row;
+
+    // 1. Récupérer la location avec les infos client
+    let row = sqlx::query(
+        "SELECT 
+            l.id, l.numero_location, l.client_id, l.utilisateur_id, l.statut,
+            l.date_evenement, l.date_retrait_prevue, l.date_retrait_effective,
+            l.date_retour_prevue, l.date_retour_effective,
+            l.montant_total_ht_centimes, l.tva_taux, l.montant_total_ttc_centimes,
+            l.frais_nettoyage_centimes, l.frais_retard_centimes, l.frais_degradation_centimes,
+            l.remise_centimes, l.montant_caution_centimes, l.statut_caution,
+            l.notes_caution, l.notes, l.chemin_pdf, l.created_at, l.updated_at,
+            c.nom as client_nom, c.prenom as client_prenom, c.telephone as client_tel,
+            c.email as client_email, c.adresse as client_adr, c.ville as client_ville,
+            c.code_postal as client_cp, c.numero_cni as client_cni
+         FROM locations l
+         LEFT JOIN clients c ON l.client_id = c.id
+         WHERE l.id = ?"
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::DatabaseError)?
+    .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", id)))?;
+
+    let location_id: String = row.get("id");
+    let contract_number: String = row.get("numero_location");
+    let customer_id: String = row.get("client_id");
+    let client_nom: Option<String> = row.get("client_nom");
+    let client_prenom: Option<String> = row.get("client_prenom");
+    let customer_name = match (client_prenom, client_nom) {
+        (Some(p), Some(n)) => format!("{} {}", p, n),
+        (None, Some(n)) => n,
+        (Some(p), None) => p,
+        (None, None) => "Client Inconnu".to_string(),
+    };
+    let customer_phone: String = row.get::<Option<String>, _>("client_tel").unwrap_or_default();
+    let customer_email: Option<String> = row.get("client_email");
+    let customer_adr: Option<String> = row.get("client_adr");
+    let customer_ville: Option<String> = row.get("client_ville");
+    let customer_cp: Option<String> = row.get("client_cp");
+    let customer_address = match (customer_adr, customer_cp, customer_ville) {
+        (Some(a), Some(cp), Some(v)) => Some(format!("{}, {} {}", a, cp, v)),
+        (Some(a), _, _) => Some(a),
+        _ => None,
+    };
+    let customer_cni: Option<String> = row.get("client_cni");
+
+    let status: String = row.get("statut");
+    let event_date: Option<String> = row.get::<Option<String>, _>("date_evenement").map(|d| d.split('T').next().unwrap_or(&d).to_string());
+    let pickup_date_raw: String = row.get("date_retrait_prevue");
+    let pickup_date = pickup_date_raw.split('T').next().unwrap_or(&pickup_date_raw).to_string();
+    let return_date_sched_raw: String = row.get("date_retour_prevue");
+    let return_date_scheduled = return_date_sched_raw.split('T').next().unwrap_or(&return_date_sched_raw).to_string();
+    let return_date_actual: Option<String> = row.get::<Option<String>, _>("date_retour_effective").map(|d| d.split('T').next().unwrap_or(&d).to_string());
+
+    let total_amount_cents: i64 = row.get("montant_total_ttc_centimes");
+    let cleaning_fee_cents: i64 = row.get("frais_nettoyage_centimes");
+    let late_fee_cents: i64 = row.get("frais_retard_centimes");
+    let damage_fee_cents: i64 = row.get("frais_degradation_centimes");
+    let discount_cents: i64 = row.get("remise_centimes");
+    let deposit_amount_cents: i64 = row.get("montant_caution_centimes");
+    let deposit_status: String = row.get("statut_caution");
+    let deposit_notes: Option<String> = row.get("notes_caution");
+    let notes: Option<String> = row.get("notes");
+    let pdf_archived_path: Option<String> = row.get("chemin_pdf");
+    let created_at: String = row.get("created_at");
+    let updated_at: String = row.get("updated_at");
+
+    // 2. Récupérer les lignes de location
+    let item_rows = sqlx::query(
+        "SELECT 
+            ll.id, ll.variante_id, ll.article_id, ll.quantite, ll.prix_unitaire_centimes,
+            ll.caution_centimes, ll.etat_depart, ll.etat_retour, ll.est_rendu, ll.date_retour, ll.notes,
+            v.code_barre as var_barcode, v.taille as var_taille, v.sous_taille as var_sub_taille,
+            a.id as art_id, a.nom as art_nom, a.reference as art_ref, a.frais_nettoyage_centimes as art_cleaning
+         FROM lignes_location ll
+         LEFT JOIN variantes_stock v ON ll.variante_id = v.id
+         LEFT JOIN articles a ON COALESCE(ll.article_id, v.article_id) = a.id
+         WHERE ll.location_id = ?"
+    )
+    .bind(&location_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+
+    let mut items = Vec::new();
+    let mut total_rental_cents = 0i64;
+
+    for ir in item_rows {
+        let var_id: Option<String> = ir.get("variante_id");
+        let art_id: Option<String> = ir.get("art_id");
+        let art_name: String = ir.get::<Option<String>, _>("art_nom").unwrap_or_else(|| "Article inconnu".to_string());
+        let art_ref: String = ir.get::<Option<String>, _>("art_ref").unwrap_or_default();
+        let barcode: String = ir.get::<Option<String>, _>("var_barcode").unwrap_or_else(|| art_ref.clone());
+        let size: String = ir.get::<Option<String>, _>("var_taille").unwrap_or_else(|| "TU".to_string());
+        let sub_size: Option<String> = ir.get("var_sub_taille");
+        let price_unit: i64 = ir.get("prix_unitaire_centimes");
+        let caution_line: i64 = ir.get("caution_centimes");
+        let cleaning_line: i64 = ir.get::<Option<i64>, _>("art_cleaning").unwrap_or(0);
+        let etat_dep: String = ir.get::<Option<String>, _>("etat_depart").unwrap_or_else(|| "excellent".to_string());
+        let etat_ret: Option<String> = ir.get("etat_retour");
+        let is_ret: i64 = ir.get("est_rendu");
+        let date_ret: Option<String> = ir.get::<Option<String>, _>("date_retour").map(|d| d.split('T').next().unwrap_or(&d).to_string());
+        let line_notes: Option<String> = ir.get("notes");
+
+        total_rental_cents += price_unit;
+
+        items.push(RentalArticleItemDto {
+            variant_id: var_id.unwrap_or_else(|| art_id.clone().unwrap_or_default()),
+            article_id: art_id.unwrap_or_default(),
+            article_name: art_name,
+            reference: art_ref,
+            barcode,
+            size,
+            sub_size,
+            unit_price_cents: price_unit,
+            deposit_cents: caution_line,
+            cleaning_fee_cents: cleaning_line,
+            pickup_condition: etat_dep,
+            return_condition: etat_ret,
+            damage_fee_cents: None,
+            damage_notes: line_notes,
+            is_returned: is_ret == 1,
+            return_date: date_ret,
+        });
+    }
+
+    // 3. Récupérer les paiements associés
+    let pay_rows = sqlx::query(
+        "SELECT montant_centimes, moyen_paiement FROM paiements WHERE location_id = ? ORDER BY date_paiement ASC"
+    )
+    .bind(&location_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+
+    let mut paid_amount_cents = 0i64;
+    let mut payment_method = "carte_bancaire".to_string();
+    for pr in pay_rows {
+        let m: i64 = pr.get("montant_centimes");
+        let mp: String = pr.get("moyen_paiement");
+        paid_amount_cents += m;
+        payment_method = mp;
+    }
+
+    let remaining_amount_cents = (total_amount_cents - paid_amount_cents).max(0);
+    let deposit_method = if deposit_status == "empreinte_cb" {
+        "empreinte_cb".to_string()
+    } else if deposit_status == "especes" {
+        "especes".to_string()
+    } else if deposit_status == "virement" {
+        "virement".to_string()
+    } else {
+        "cheque".to_string()
+    };
+
+    Ok(RentalContractDto {
+        id: location_id,
+        contract_number,
+        customer_id,
+        customer_name,
+        customer_phone,
+        customer_email,
+        customer_address,
+        customer_cni,
+        status,
+        event_date,
+        pickup_date,
+        return_date_scheduled,
+        return_date_actual,
+        items,
+        total_rental_cents,
+        cleaning_fee_cents,
+        discount_cents,
+        late_fee_cents,
+        damage_fee_cents,
+        total_amount_cents,
+        deposit_amount_cents,
+        deposit_status,
+        deposit_method,
+        deposit_notes,
+        paid_amount_cents,
+        payment_method,
+        remaining_amount_cents,
+        notes,
+        pdf_archived_path,
+        created_at,
+        updated_at,
+    })
+}
+
+#[command]
+pub async fn list_rentals(state: State<'_, DbState>) -> Result<Vec<RentalContractDto>, AppError> {
+    let ids: Vec<(String,)> = sqlx::query_as("SELECT id FROM locations ORDER BY date_retrait_prevue DESC")
+        .fetch_all(&state.pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+    let mut list = Vec::with_capacity(ids.len());
+    for (id,) in ids {
+        let dto = fetch_rental_dto_by_id(&state.pool, &id).await?;
+        list.push(dto);
+    }
+    Ok(list)
+}
+
+#[command]
+pub async fn get_rental(id: String, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
+    fetch_rental_dto_by_id(&state.pool, &id).await
+}
+
+#[command]
+pub async fn create_rental(dto: CreateRentalContractDto, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
+    if dto.pickup_date.trim().is_empty() || dto.return_date_scheduled.trim().is_empty() {
+        return Err(AppError::Validation("Les dates de retrait et de retour sont obligatoires".to_string()));
+    }
+    if dto.pickup_date > dto.return_date_scheduled {
+        return Err(AppError::Validation("La date de retour doit être postérieure ou égale à la date de retrait".to_string()));
+    }
+    if dto.selected_variant_ids.is_empty() && dto.quantity_items.as_ref().map_or(true, |q| q.is_empty()) {
+        return Err(AppError::Validation("Veuillez sélectionner au moins un article pour le contrat".to_string()));
+    }
+
+    let duration_days = match (
+        chrono::NaiveDate::parse_from_str(&dto.pickup_date, "%Y-%m-%d"),
+        chrono::NaiveDate::parse_from_str(&dto.return_date_scheduled, "%Y-%m-%d"),
+    ) {
+        (Ok(start), Ok(end)) => (end - start).num_days().max(1),
+        _ => 1,
+    };
+
+    let mut conn = state.pool.acquire().await.map_err(map_sqlite_err)?;
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(map_sqlite_err)?;
+
+    let result: Result<String, AppError> = async {
+        use sqlx::Row;
+
+        let client = sqlx::query_as::<_, Client>("SELECT * FROM clients WHERE id = ?")
+            .bind(&dto.customer_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_sqlite_err)?
+            .ok_or_else(|| AppError::NotFound(format!("Client introuvable : {}", dto.customer_id)))?;
+
+        if client.est_bloque == 1 {
+            return Err(AppError::Validation(format!(
+                "CLIENT EN LISTE NOIRE : {}",
+                client.notes.as_deref().unwrap_or("Accès restreint")
+            )));
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let today_str = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let is_immediate = dto.pickup_date <= today_str;
+        let contract_status = if is_immediate { "en_cours" } else { "reserve" };
+        let variant_status_target = if is_immediate { "en_location" } else { "reserve" };
+
+        let mut lines_to_insert = Vec::new();
+        let mut total_rental_cents = 0i64;
+        let mut cleaning_fee_total_cents = 0i64;
+        let mut default_deposit_cents = 0i64;
+
+        for var_id in &dto.selected_variant_ids {
+            let row = sqlx::query(
+                "SELECT v.id as var_id, v.article_id, v.statut as var_statut, v.etat_usure,
+                        a.nom as art_nom, a.prix_location_centimes, a.caution_suggeree_centimes, a.frais_nettoyage_centimes
+                 FROM variantes_stock v
+                 JOIN articles a ON v.article_id = a.id
+                 WHERE v.id = ?"
+            )
+            .bind(var_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_sqlite_err)?
+            .ok_or_else(|| AppError::Validation(format!("Variante introuvable : {}", var_id)))?;
+
+            let art_nom: String = row.get("art_nom");
+            let var_statut: String = row.get("var_statut");
+            let art_id: String = row.get("article_id");
+            let prix_loc: i64 = row.get("prix_location_centimes");
+            let caution: i64 = row.get("caution_suggeree_centimes");
+            let cleaning: i64 = row.get("frais_nettoyage_centimes");
+            let etat_usure: String = row.get::<Option<String>, _>("etat_usure").unwrap_or_else(|| "excellent".to_string());
+
+            if var_statut == "au_pressing" {
+                return Err(AppError::Validation(format!("L'article '{}' est actuellement au pressing (nettoyage).", art_nom)));
+            }
+            if var_statut == "en_retouche" || var_statut == "indisponible" {
+                return Err(AppError::Validation(format!("L'article '{}' est en cours de réparation / indisponible.", art_nom)));
+            }
+
+            let conflict = sqlx::query(
+                "SELECT l.numero_location, c.prenom, c.nom, l.date_retrait_prevue, l.date_retour_prevue
+                 FROM lignes_location ll
+                 JOIN locations l ON ll.location_id = l.id
+                 JOIN clients c ON l.client_id = c.id
+                 WHERE ll.variante_id = ?
+                   AND ll.est_rendu = 0
+                   AND l.statut IN ('reserve', 'en_cours', 'en_retard', 'litige')
+                   AND l.date_retrait_prevue <= ?
+                   AND l.date_retour_prevue >= ?
+                 LIMIT 1"
+            )
+            .bind(var_id)
+            .bind(&dto.return_date_scheduled)
+            .bind(&dto.pickup_date)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+            if let Some(c_row) = conflict {
+                let num_loc: String = c_row.get("numero_location");
+                let c_nom: String = c_row.get("nom");
+                let c_prenom: String = c_row.get("prenom");
+                let c_start: String = c_row.get("date_retrait_prevue");
+                let c_end: String = c_row.get("date_retour_prevue");
+                return Err(AppError::Validation(format!(
+                    "Conflit de date pour '{}' avec le contrat {} ({} {}) du {} au {}.",
+                    art_nom, num_loc, c_prenom, c_nom, c_start, c_end
+                )));
+            }
+
+            sqlx::query("UPDATE variantes_stock SET statut = ?, updated_at = ? WHERE id = ?")
+                .bind(variant_status_target)
+                .bind(&now)
+                .bind(var_id)
+                .execute(&mut *conn)
+                .await
+                .map_err(map_sqlite_err)?;
+
+            let item_total = prix_loc * duration_days;
+            total_rental_cents += item_total;
+            cleaning_fee_total_cents += cleaning;
+            default_deposit_cents += caution;
+
+            lines_to_insert.push((
+                format!("lig-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)),
+                Some(var_id.clone()),
+                Some(art_id),
+                1i64,
+                item_total,
+                caution,
+                etat_usure,
+            ));
+        }
+
+        if let Some(qty_items) = &dto.quantity_items {
+            for q_item in qty_items {
+                if q_item.quantite <= 0 {
+                    return Err(AppError::Validation("La quantité demandée doit être strictement positive.".to_string()));
+                }
+
+                let art_row = sqlx::query(
+                    "SELECT id, nom, prix_location_centimes, caution_suggeree_centimes, frais_nettoyage_centimes, quantite_disponible
+                     FROM articles WHERE id = ? AND est_actif = 1"
+                )
+                .bind(&q_item.article_id)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_sqlite_err)?
+                .ok_or_else(|| AppError::Validation(format!("Article introuvable : {}", q_item.article_id)))?;
+
+                let art_nom: String = art_row.get("nom");
+                let prix_loc: i64 = art_row.get("prix_location_centimes");
+                let caution: i64 = art_row.get("caution_suggeree_centimes");
+                let cleaning: i64 = art_row.get("frais_nettoyage_centimes");
+
+                let upd_res = sqlx::query(
+                    "UPDATE articles 
+                     SET quantite_disponible = quantite_disponible - ?, updated_at = ? 
+                     WHERE id = ? AND quantite_disponible >= ?"
+                )
+                .bind(q_item.quantite)
+                .bind(&now)
+                .bind(&q_item.article_id)
+                .bind(q_item.quantite)
+                .execute(&mut *conn)
+                .await
+                .map_err(map_sqlite_err)?;
+
+                if upd_res.rows_affected() == 0 {
+                    return Err(AppError::Validation(format!("Stock insuffisant pour l'article '{}'.", art_nom)));
+                }
+
+                let line_total = (prix_loc * duration_days) * q_item.quantite;
+                let line_caution = caution * q_item.quantite;
+                total_rental_cents += line_total;
+                cleaning_fee_total_cents += cleaning * q_item.quantite;
+                default_deposit_cents += line_caution;
+
+                lines_to_insert.push((
+                    format!("lig-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)),
+                    None,
+                    Some(q_item.article_id.clone()),
+                    q_item.quantite,
+                    line_total,
+                    line_caution,
+                    "bon".to_string(),
+                ));
+            }
+        }
+
+        let discount_cents = dto.discount_cents.unwrap_or(0);
+        let total_facture_cents = (total_rental_cents - discount_cents).max(0);
+        let deposit_amount_cents = dto.deposit_amount_cents.unwrap_or(default_deposit_cents);
+        let paid_cents = dto.paid_amount_cents.unwrap_or(0);
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO app_meta (cle, valeur, updated_at) VALUES ('dernier_numero_location', '15', ?)"
+        )
+        .bind(&now)
+        .execute(&mut *conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        sqlx::query(
+            "UPDATE app_meta SET valeur = CAST(valeur AS INTEGER) + 1, updated_at = ? WHERE cle = 'dernier_numero_location'"
+        )
+        .bind(&now)
+        .execute(&mut *conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        let meta_row: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'dernier_numero_location'")
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+        let seq_num: i64 = meta_row.0.parse().unwrap_or(16);
+        let current_year = chrono::Utc::now().format("%Y").to_string();
+        let contract_number = format!("LOC-{}-{:04}", current_year, seq_num);
+        let location_id = format!("loc-{}", chrono::Utc::now().timestamp_millis());
+        let pdf_path = format!("/bons/{}/BON-{}.pdf", chrono::Utc::now().format("%Y-%m"), contract_number);
+        let user_id = dto.utilisateur_id.unwrap_or_else(|| "usr-001".to_string());
+        let deposit_status = if dto.deposit_method == "empreinte_cb" {
+            "empreinte_cb"
+        } else if dto.deposit_method == "especes" {
+            "especes"
+        } else {
+            "cheque_retenu"
+        };
+
+        sqlx::query(
+            "INSERT INTO locations (
+                id, numero_location, client_id, utilisateur_id, statut,
+                date_evenement, date_retrait_prevue, date_retour_prevue,
+                montant_total_ht_centimes, tva_taux, montant_total_ttc_centimes,
+                frais_nettoyage_centimes, frais_retard_centimes, frais_degradation_centimes,
+                remise_centimes, montant_caution_centimes, statut_caution,
+                notes_caution, notes, chemin_pdf, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&location_id)
+        .bind(&contract_number)
+        .bind(&dto.customer_id)
+        .bind(&user_id)
+        .bind(contract_status)
+        .bind(&dto.event_date)
+        .bind(&dto.pickup_date)
+        .bind(&dto.return_date_scheduled)
+        .bind(total_facture_cents)
+        .bind(total_facture_cents)
+        .bind(cleaning_fee_total_cents)
+        .bind(discount_cents)
+        .bind(deposit_amount_cents)
+        .bind(deposit_status)
+        .bind(Option::<String>::None)
+        .bind(&dto.notes)
+        .bind(&pdf_path)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        for line in lines_to_insert {
+            sqlx::query(
+                "INSERT INTO lignes_location (
+                    id, location_id, variante_id, article_id, quantite, type_ligne,
+                    prix_unitaire_centimes, caution_centimes, etat_depart, est_rendu
+                ) VALUES (?, ?, ?, ?, ?, 'location', ?, ?, ?, 0)"
+            )
+            .bind(&line.0)
+            .bind(&location_id)
+            .bind(&line.1)
+            .bind(&line.2)
+            .bind(line.3)
+            .bind(line.4)
+            .bind(line.5)
+            .bind(&line.6)
+            .execute(&mut *conn)
+            .await
+            .map_err(map_sqlite_err)?;
+        }
+
+        if paid_cents > 0 {
+            let pay_id = format!("pay-{}", chrono::Utc::now().timestamp_millis());
+            let pay_type = if paid_cents >= total_facture_cents { "solde" } else { "acompte" };
+            sqlx::query(
+                "INSERT INTO paiements (
+                    id, location_id, vente_id, utilisateur_id, montant_centimes,
+                    type_paiement, moyen_paiement, reference_transaction, notes, date_paiement
+                ) VALUES (?, ?, NULL, ?, ?, ?, ?, NULL, 'Paiement à la création du contrat', ?)"
+            )
+            .bind(&pay_id)
+            .bind(&location_id)
+            .bind(&user_id)
+            .bind(paid_cents)
+            .bind(pay_type)
+            .bind(&dto.payment_method)
+            .bind(&now)
+            .execute(&mut *conn)
+            .await
+            .map_err(map_sqlite_err)?;
+        }
+
+        Ok(location_id)
+    }.await;
+
+    match result {
+        Ok(loc_id) => {
+            sqlx::query("COMMIT").execute(&mut *conn).await.map_err(map_sqlite_err)?;
+            fetch_rental_dto_by_id(&state.pool, &loc_id).await
+        }
+        Err(e) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(e)
+        }
+    }
+}
+
+#[command]
+pub async fn register_return(dto: RegisterReturnDto, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
+    let mut conn = state.pool.acquire().await.map_err(map_sqlite_err)?;
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(map_sqlite_err)?;
+
+    let result: Result<(), AppError> = async {
+        let loc = sqlx::query_as::<_, Location>("SELECT * FROM locations WHERE id = ?")
+            .bind(&dto.contract_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_sqlite_err)?
+            .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", dto.contract_id)))?;
+
+        if loc.statut == "retourne" || loc.statut == "annule" {
+            return Err(AppError::Validation(format!("Le contrat {} est déjà clôturé ou annulé.", loc.numero_location)));
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let today_str = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+        let mut total_damage_fee_cents = 0i64;
+        let mut any_damage = false;
+
+        for item in &dto.items {
+            let damage_fee = item.damage_fee_cents.unwrap_or(0);
+            if item.condition == "endommage" {
+                any_damage = true;
+                total_damage_fee_cents += damage_fee;
+            }
+
+            if let Some(var_id) = &item.variant_id {
+                let new_stock_status = match item.condition.as_str() {
+                    "bon_etat" => "disponible",
+                    "a_nettoyer" => "au_pressing",
+                    _ => "en_retouche",
+                };
+
+                sqlx::query(
+                    "UPDATE variantes_stock 
+                     SET statut = ?, nb_locations = nb_locations + 1, updated_at = ? 
+                     WHERE id = ?"
+                )
+                .bind(new_stock_status)
+                .bind(&now)
+                .bind(var_id)
+                .execute(&mut *conn)
+                .await
+                .map_err(map_sqlite_err)?;
+
+                sqlx::query(
+                    "UPDATE lignes_location 
+                     SET est_rendu = 1, date_retour = ?, etat_retour = ?, notes = ? 
+                     WHERE location_id = ? AND variante_id = ?"
+                )
+                .bind(&today_str)
+                .bind(&item.condition)
+                .bind(&item.damage_notes)
+                .bind(&dto.contract_id)
+                .bind(var_id)
+                .execute(&mut *conn)
+                .await
+                .map_err(map_sqlite_err)?;
+            } else if let Some(art_id) = &item.article_id {
+                let row_q: Option<(i64,)> = sqlx::query_as(
+                    "SELECT quantite FROM lignes_location WHERE location_id = ? AND article_id = ? AND est_rendu = 0 LIMIT 1"
+                )
+                .bind(&dto.contract_id)
+                .bind(art_id)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_sqlite_err)?;
+
+                if let Some((q,)) = row_q {
+                    sqlx::query(
+                        "UPDATE articles SET quantite_disponible = quantite_disponible + ?, updated_at = ? WHERE id = ?"
+                    )
+                    .bind(q)
+                    .bind(&now)
+                    .bind(art_id)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+
+                    sqlx::query(
+                        "UPDATE lignes_location SET est_rendu = 1, date_retour = ?, etat_retour = ?, notes = ? WHERE location_id = ? AND article_id = ?"
+                    )
+                    .bind(&today_str)
+                    .bind(&item.condition)
+                    .bind(&item.damage_notes)
+                    .bind(&dto.contract_id)
+                    .bind(art_id)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+                }
+            }
+        }
+
+        let deposit_status = if total_damage_fee_cents > 0 {
+            if total_damage_fee_cents >= loc.montant_caution_centimes {
+                "conservee_totalement"
+            } else {
+                "conservee_partiellement"
+            }
+        } else {
+            "restituee"
+        };
+
+        let final_status = if any_damage { "litige" } else { "retourne" };
+
+        sqlx::query(
+            "UPDATE locations 
+             SET statut = ?, date_retour_effective = ?, frais_degradation_centimes = ?, statut_caution = ?, updated_at = ? 
+             WHERE id = ?"
+        )
+        .bind(final_status)
+        .bind(&today_str)
+        .bind(total_damage_fee_cents)
+        .bind(deposit_status)
+        .bind(&now)
+        .bind(&dto.contract_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        Ok(())
+    }.await;
+
+    match result {
+        Ok(_) => {
+            sqlx::query("COMMIT").execute(&mut *conn).await.map_err(map_sqlite_err)?;
+            fetch_rental_dto_by_id(&state.pool, &dto.contract_id).await
+        }
+        Err(e) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(e)
+        }
+    }
+}
+
+#[command]
+pub async fn cancel_rental(id: String, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
+    let mut conn = state.pool.acquire().await.map_err(map_sqlite_err)?;
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await.map_err(map_sqlite_err)?;
+
+    let result: Result<(), AppError> = async {
+        let loc = sqlx::query_as::<_, Location>("SELECT * FROM locations WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(map_sqlite_err)?
+            .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", id)))?;
+
+        if loc.statut != "reserve" && loc.statut != "brouillon" {
+            return Err(AppError::Validation(format!(
+                "Impossible d'annuler le contrat {} car son statut est '{}' (seuls 'reserve' ou 'brouillon' peuvent être annulés).",
+                loc.numero_location, loc.statut
+            )));
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let lines = sqlx::query(
+            "SELECT variante_id, article_id, quantite FROM lignes_location WHERE location_id = ?"
+        )
+        .bind(&id)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        use sqlx::Row;
+        for line in lines {
+            let var_id: Option<String> = line.get("variante_id");
+            let art_id: Option<String> = line.get("article_id");
+            let qty: i64 = line.get("quantite");
+
+            if let Some(v_id) = var_id {
+                sqlx::query("UPDATE variantes_stock SET statut = 'disponible', updated_at = ? WHERE id = ? AND statut = 'reserve'")
+                    .bind(&now)
+                    .bind(&v_id)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+            } else if let Some(a_id) = art_id {
+                sqlx::query("UPDATE articles SET quantite_disponible = quantite_disponible + ?, updated_at = ? WHERE id = ?")
+                    .bind(qty)
+                    .bind(&now)
+                    .bind(&a_id)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+            }
+        }
+
+        sqlx::query("UPDATE locations SET statut = 'annule', updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(&id)
+            .execute(&mut *conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+        Ok(())
+    }.await;
+
+    match result {
+        Ok(_) => {
+            sqlx::query("COMMIT").execute(&mut *conn).await.map_err(map_sqlite_err)?;
+            fetch_rental_dto_by_id(&state.pool, &id).await
+        }
+        Err(e) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(e)
+        }
+    }
+}
+
+// Commandes historiques conservées pour rétrocompatibilité
 #[command]
 pub async fn list_locations(state: State<'_, DbState>) -> Result<Vec<Location>, AppError> {
     let locations = sqlx::query_as::<_, Location>(

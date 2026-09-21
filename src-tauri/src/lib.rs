@@ -41,6 +41,11 @@ pub fn run() {
             commands::list_locations,
             commands::get_location,
             commands::update_location_statut,
+            commands::list_rentals,
+            commands::get_rental,
+            commands::create_rental,
+            commands::register_return,
+            commands::cancel_rental,
             // Paiements
             commands::list_paiements,
             commands::create_paiement,

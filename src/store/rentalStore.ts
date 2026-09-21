@@ -8,10 +8,11 @@ import type {
 import { useStockStore } from "@/store/stockStore";
 import { useClientStore } from "@/store/clientStore";
 import { calculateRentalDays } from "@/lib/utils";
-import { dbStorage } from "@/services/dbStorage";
+import { invokeCommand, isTauri } from "@/services/tauri";
 
 interface RentalStoreState {
   contracts: RentalContract[];
+  isLoading: boolean;
   selectedContractForPdf: RentalContract | null;
   selectedContractForReturn: RentalContract | null;
   activeFilter: "all" | "en_cours" | "reserve" | "en_retard" | "retourne";
@@ -23,6 +24,7 @@ interface RentalStoreState {
   isReturnModalOpen: boolean;
 
   // Actions
+  loadContracts: () => Promise<void>;
   setFilter: (
     filter: "all" | "en_cours" | "reserve" | "en_retard" | "retourne"
   ) => void;
@@ -53,7 +55,9 @@ interface RentalStoreState {
       damage_fee_cents: number;
       damage_notes?: string;
     }[]
-  ) => void;
+  ) => Promise<RentalContract>;
+
+  cancelContract: (contractId: string) => Promise<RentalContract>;
 }
 
 // 15 contrats initiaux complets et réalistes
@@ -335,11 +339,29 @@ const INITIAL_CONTRACTS: RentalContract[] = [
 ];
 
 export const useRentalStore = create<RentalStoreState>((set, get) => ({
-  contracts: dbStorage.load<RentalContract[]>(dbStorage.KEYS.CONTRACTS, INITIAL_CONTRACTS),
+  contracts: INITIAL_CONTRACTS,
+  isLoading: false,
   selectedContractForPdf: null,
   selectedContractForReturn: null,
   activeFilter: "all",
   searchQuery: "",
+
+  loadContracts: async () => {
+    set({ isLoading: true });
+    try {
+      if (isTauri()) {
+        const contracts = await invokeCommand<RentalContract[]>("list_rentals");
+        if (contracts && contracts.length > 0) {
+          set({ contracts });
+        }
+      }
+    } catch (err) {
+      console.error("[rentalStore] Erreur chargement contrats SQLite :", err);
+      throw err;
+    } finally {
+      set({ isLoading: false });
+    }
+  },
 
   isCreateRentalModalOpen: false,
   isPdfPreviewModalOpen: false,
@@ -427,6 +449,43 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
   },
 
   createRentalContract: async (input) => {
+    // Mode natif Tauri : SQLite est l'unique source de vérité
+    if (isTauri()) {
+      set({ isLoading: true });
+      try {
+        const dto = {
+          customer_id: input.customer_id,
+          pickup_date: input.pickup_date,
+          return_date_scheduled: input.return_date_scheduled,
+          event_date: input.event_date || null,
+          selected_variant_ids: input.selected_variant_ids,
+          quantity_items: null,
+          discount_cents: input.discount_cents || 0,
+          deposit_method: input.deposit_method,
+          deposit_amount_cents: input.deposit_amount_cents,
+          paid_amount_cents: input.paid_amount_cents || 0,
+          payment_method: input.payment_method,
+          notes: input.notes || null,
+        };
+
+        const newContract = await invokeCommand<RentalContract>("create_rental", { dto });
+
+        // Mettre à jour l'état Zustand avec le retour garanti par SQLite
+        set((state) => ({
+          contracts: [newContract, ...state.contracts.filter((c) => c.id !== newContract.id)],
+          isCreateRentalModalOpen: false,
+          selectedContractForPdf: newContract,
+          isPdfPreviewModalOpen: true,
+        }));
+
+        return newContract;
+      } finally {
+        set({ isLoading: false });
+      }
+    }
+
+    // Mode hors Tauri (tests unitaires jsdom / web mock) : calcul en mémoire pure
+    // SANS AUCUNE PERSISTANCE LOCALSTORAGE
     const clients = useClientStore.getState().clients;
     const client = clients.find((c) => c.id === input.customer_id);
     if (!client) throw new Error("Client sélectionné introuvable.");
@@ -439,17 +498,14 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
     }
 
     const stockArticles = useStockStore.getState().articles;
-
     const durationDays = calculateRentalDays(input.pickup_date, input.return_date_scheduled);
 
-    // Rassembler les items sélectionnés
     const items: RentalArticleItem[] = [];
     let totalRentalCents = 0;
     let cleaningFeeTotalCents = 0;
     let defaultDepositCents = 0;
 
     for (const varId of input.selected_variant_ids) {
-      // Test disponibilité
       const check = get().checkVariantAvailability(
         varId,
         input.pickup_date,
@@ -497,7 +553,6 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
     const paidCents = input.paid_amount_cents || 0;
     const remainingCents = Math.max(0, totalFactureCents - paidCents);
 
-    // Détermination du statut initial : si le retrait est aujourd'hui ou dans le passé -> "en_cours", sinon -> "reserve"
     const todayStr = new Date().toISOString().split("T")[0];
     const isTodayOrPast = input.pickup_date <= todayStr;
     const contractStatus: RentalContractStatus = isTodayOrPast ? "en_cours" : "reserve";
@@ -536,7 +591,6 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
       updated_at: new Date().toISOString(),
     };
 
-    // 1. Décrémentation du stock disponible
     const newVariantStatus = isTodayOrPast ? "en_location" : "reserve";
     for (const item of items) {
       useStockStore
@@ -549,28 +603,49 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
         );
     }
 
-    // 2. Ajout au store des locations et persistance
-    set((state) => {
-      const updatedContracts = [newContract, ...state.contracts];
-      dbStorage.save(dbStorage.KEYS.CONTRACTS, updatedContracts);
-      return {
-        contracts: updatedContracts,
-        isCreateRentalModalOpen: false,
-      };
-    });
-
-    // 3. Ouvrir directement la prévisualisation PDF
-    set({
+    set((state) => ({
+      contracts: [newContract, ...state.contracts],
+      isCreateRentalModalOpen: false,
       selectedContractForPdf: newContract,
       isPdfPreviewModalOpen: true,
-    });
+    }));
 
     return newContract;
   },
 
-  processReturn: (contractId, itemsReturnData) => {
+  processReturn: async (contractId, itemsReturnData) => {
+    // Mode natif Tauri
+    if (isTauri()) {
+      set({ isLoading: true });
+      try {
+        const dto = {
+          contract_id: contractId,
+          items: itemsReturnData.map((item) => ({
+            variant_id: item.variant_id,
+            article_id: null,
+            condition: item.condition,
+            damage_fee_cents: item.damage_fee_cents,
+            damage_notes: item.damage_notes || null,
+          })),
+        };
+
+        const updatedContract = await invokeCommand<RentalContract>("register_return", { dto });
+
+        set((state) => ({
+          contracts: state.contracts.map((c) => (c.id === contractId ? updatedContract : c)),
+          isReturnModalOpen: false,
+          selectedContractForReturn: null,
+        }));
+
+        return updatedContract;
+      } finally {
+        set({ isLoading: false });
+      }
+    }
+
+    // Mode hors Tauri en mémoire pure
     const contract = get().contracts.find((c) => c.id === contractId);
-    if (!contract) return;
+    if (!contract) throw new Error("Contrat introuvable");
 
     let totalDamageFeeCents = 0;
     let anyDamage = false;
@@ -584,7 +659,6 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
         totalDamageFeeCents += returnData.damage_fee_cents || 0;
       }
 
-      // Synchroniser le statut de la pièce dans le stock
       const newStockStatus =
         returnData.condition === "bon_etat"
           ? "disponible"
@@ -598,7 +672,7 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
           item.article_id,
           item.variant_id,
           newStockStatus,
-          `Retour contrat ${contract.contract_number} : état ${returnData.condition} ${returnData.damage_notes ? `(${returnData.damage_notes})` : ""}`
+          `Retour contrat ${contract.contract_number} : état ${returnData.condition}`
         );
 
       return {
@@ -611,7 +685,6 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
       };
     });
 
-    // Statut caution : si dégâts -> conservee_partiellement, sinon restituée
     const depositStatus =
       totalDamageFeeCents > 0
         ? totalDamageFeeCents >= contract.deposit_amount_cents
@@ -631,16 +704,36 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
       updated_at: new Date().toISOString(),
     };
 
-    set((state) => {
-      const newContracts = state.contracts.map((c) =>
+    set((state) => ({
+      contracts: state.contracts.map((c) =>
         c.id === contractId ? updatedContract : c
-      );
-      dbStorage.save(dbStorage.KEYS.CONTRACTS, newContracts);
-      return {
-        contracts: newContracts,
-        isReturnModalOpen: false,
-        selectedContractForReturn: null,
-      };
-    });
+      ),
+      isReturnModalOpen: false,
+      selectedContractForReturn: null,
+    }));
+
+    return updatedContract;
+  },
+
+  cancelContract: async (contractId) => {
+    if (isTauri()) {
+      set({ isLoading: true });
+      try {
+        const updatedContract = await invokeCommand<RentalContract>("cancel_rental", { id: contractId });
+        set((state) => ({
+          contracts: state.contracts.map((c) => (c.id === contractId ? updatedContract : c)),
+        }));
+        return updatedContract;
+      } finally {
+        set({ isLoading: false });
+      }
+    }
+
+    set((state) => ({
+      contracts: state.contracts.map((c) =>
+        c.id === contractId ? { ...c, status: "annule" as const } : c
+      ),
+    }));
+    return get().contracts.find((c) => c.id === contractId)!;
   },
 }));
