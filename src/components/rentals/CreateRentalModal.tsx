@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   X,
   Search,
@@ -7,14 +7,20 @@ import {
   FileText,
   ShoppingBag,
   CheckCircle2,
+  Camera,
+  Shirt,
+  Eye,
 } from "lucide-react";
 import { formatCents, eurosToCents } from "@/lib/utils";
 import { useRentalStore } from "@/store/rentalStore";
 import { useClientStore } from "@/store/clientStore";
 import { useStockStore } from "@/store/stockStore";
 import { QuickCreateClientModal } from "@/components/clients/QuickCreateClientModal";
+import { QrCameraScanner } from "@/components/common/QrCameraScanner";
+import { photoService } from "@/services/photoService";
 import { toast } from "sonner";
 import type { CustomerDetailed } from "@/types/customer";
+import type { StockArticle, StockVariant } from "@/types/stock";
 
 export const CreateRentalModal: React.FC = () => {
   const {
@@ -39,6 +45,37 @@ export const CreateRentalModal: React.FC = () => {
   // Étape 3 : Articles sélectionnés (IDs des variantes choisies)
   const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([]);
   const [articleSearch, setArticleSearch] = useState("");
+
+  // Gestion des photos : miniatures par lot et Lightbox
+  const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
+  const [lightboxArticle, setLightboxArticle] = useState<{
+    article: StockArticle;
+    photoUrl: string;
+  } | null>(null);
+
+  // Scanner QR par caméra
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Chargement par lot des miniatures au montage ou dès que la liste d'articles change
+  useEffect(() => {
+    if (articles.length === 0) return;
+    const articleIds = articles.map((a) => a.id);
+    photoService.getBatchThumbs(articleIds).then((res) => {
+      setThumbnails((prev) => ({ ...prev, ...res }));
+    });
+  }, [articles]);
+
+  // Fermeture de la lightbox avec Échap
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setLightboxArticle(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // Étape 4 : Calculs & Remise
   const [discountEuros, setDiscountEuros] = useState("");
@@ -135,6 +172,105 @@ export const CreateRentalModal: React.FC = () => {
       }
       setSelectedVariantIds([...selectedVariantIds, variantId]);
     }
+  };
+
+  /**
+   * Analyse et traite la valeur lue par le scanner QR de caméra ou la saisie manuelle :
+   * Décode soit un JSON d'étiquette, soit un code-barre brut, soit une référence d'article.
+   */
+  const handleCodeScanned = (rawCode: string): { status: "success" | "warning" | "error"; message: string } => {
+    if (!pickupDate || !returnDate) {
+      toast.error("Veuillez d'abord renseigner les dates de location (Étape 2).");
+      return { status: "error", message: "Dates de location manquantes (Étape 2)" };
+    }
+
+    let targetBarcode = rawCode.trim();
+    let targetRef = rawCode.trim();
+
+    // 1. Tente de parser si c'est le JSON complet généré par QrLabelModal
+    if (targetBarcode.startsWith("{") && targetBarcode.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(targetBarcode);
+        if (parsed.barcode) targetBarcode = parsed.barcode;
+        if (parsed.ref) targetRef = parsed.ref;
+      } catch {
+        // En cas d'erreur de parsing JSON, on garde le code brut
+      }
+    }
+
+    // 2. Recherche par code-barre de variante
+    let foundVariant: StockVariant | null = null;
+    let foundArticle: StockArticle | null = null;
+
+    for (const art of articles) {
+      const vMatch = art.variants.find(
+        (v) => v.barcode.toUpperCase() === targetBarcode.toUpperCase()
+      );
+      if (vMatch) {
+        foundVariant = vMatch;
+        foundArticle = art;
+        break;
+      }
+    }
+
+    // 3. Repli si non trouvé par code-barre : recherche par référence d'article
+    if (!foundVariant) {
+      const artMatch = articles.find(
+        (a) =>
+          a.reference.toUpperCase() === targetRef.toUpperCase() ||
+          a.id.toUpperCase() === targetRef.toUpperCase()
+      );
+      if (artMatch && artMatch.variants.length > 0) {
+        // Sélectionne en priorité la première variante disponible
+        const availableVariant = artMatch.variants.find((v) => {
+          const c = checkVariantAvailability(v.id, pickupDate, returnDate);
+          return c.available;
+        });
+        foundVariant = availableVariant || artMatch.variants[0];
+        foundArticle = artMatch;
+      }
+    }
+
+    // 4. Cas : Code inconnu
+    if (!foundVariant || !foundArticle) {
+      toast.error(`Article introuvable pour le code "${rawCode}".`);
+      return { status: "error", message: `Article introuvable : ${rawCode}` };
+    }
+
+    // 5. Cas : Déjà sélectionné
+    if (selectedVariantIds.includes(foundVariant.id)) {
+      toast.info(`"${foundArticle.name} (T.${foundVariant.size})" est déjà dans votre sélection.`);
+      return {
+        status: "warning",
+        message: `${foundArticle.name} (T.${foundVariant.size}) déjà dans la sélection`,
+      };
+    }
+
+    // 6. Cas : Disponibilité / Conflit de dates
+    const check = checkVariantAvailability(foundVariant.id, pickupDate, returnDate);
+    if (!check.available) {
+      toast.error(`Indisponible sur ces dates : ${check.conflictReason || "Conflit calendrier"}`);
+      return {
+        status: "error",
+        message: `${foundArticle.name} (T.${foundVariant.size}) : Indisponible sur ces dates`,
+      };
+    }
+
+    // 7. Succès : Ajout à la sélection et défilement fluide vers la carte
+    setSelectedVariantIds((prev) => [...prev, foundVariant.id]);
+    toast.success(`${foundArticle.name} (Taille ${foundVariant.size}) ajouté à la location !`, {
+      description: `Réf : ${foundVariant.barcode} • Caution : ${formatCents(foundArticle.deposit_price_cents)}`,
+    });
+
+    const cardEl = cardRefs.current[foundVariant.id];
+    if (cardEl) {
+      cardEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    return {
+      status: "success",
+      message: `${foundArticle.name} (T.${foundVariant.size}) ajouté avec succès`,
+    };
   };
 
   const handleSubmitContract = async (e: React.FormEvent) => {
@@ -338,7 +474,7 @@ export const CreateRentalModal: React.FC = () => {
 
           {/* Section 3 : Sélection des Articles & Vérification Temps Réel */}
           <div className="space-y-3 pt-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <label className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
                 <ShoppingBag className="w-4 h-4" />
                 <span>
@@ -347,20 +483,32 @@ export const CreateRentalModal: React.FC = () => {
                 </span>
               </label>
 
-              <div className="w-56 relative">
-                <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={articleSearch}
-                  onChange={(e) => setArticleSearch(e.target.value)}
-                  placeholder="Filtrer modèles..."
-                  className="w-full h-7 pl-7 pr-2 rounded bg-secondary/50 border border-border text-xs text-foreground focus:outline-none"
-                />
+              <div className="flex items-center gap-2">
+                {/* Bouton Scanner avec la Caméra */}
+                <button
+                  type="button"
+                  onClick={() => setIsScannerOpen(true)}
+                  className="h-7 px-2.5 rounded-md bg-foreground text-background text-xs font-medium hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-xs"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>Scanner avec la caméra</span>
+                </button>
+
+                <div className="w-52 relative">
+                  <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={articleSearch}
+                    onChange={(e) => setArticleSearch(e.target.value)}
+                    placeholder="Filtrer modèles..."
+                    className="w-full h-7 pl-7 pr-2 rounded-md bg-secondary/50 border border-border text-xs text-foreground focus:outline-none"
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Grille des pièces avec test de conflit en direct */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-56 overflow-y-auto pr-1">
+            {/* Grille des pièces avec miniatures photos, test de conflit et scroll automatique */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-64 overflow-y-auto pr-1">
               {articles
                 .filter(
                   (a) =>
@@ -368,8 +516,10 @@ export const CreateRentalModal: React.FC = () => {
                     a.name.toLowerCase().includes(articleSearch.toLowerCase()) ||
                     a.brand.toLowerCase().includes(articleSearch.toLowerCase())
                 )
-                .map((art) =>
-                  art.variants.map((v) => {
+                .map((art) => {
+                  const photoSrc = thumbnails[art.id] || (art.photos && art.photos[0]) || "";
+
+                  return art.variants.map((v) => {
                     const isSelected = selectedVariantIds.includes(v.id);
                     // Test de disponibilité en direct sur les dates saisies
                     const check = checkVariantAvailability(v.id, pickupDate, returnDate);
@@ -377,31 +527,66 @@ export const CreateRentalModal: React.FC = () => {
                     return (
                       <div
                         key={v.id}
+                        ref={(el) => {
+                          cardRefs.current[v.id] = el;
+                        }}
                         onClick={() => handleToggleVariant(v.id)}
-                        className={`p-3 rounded-xl border text-xs cursor-pointer flex flex-col justify-between transition-all ${
+                        className={`p-3 rounded-xl border text-xs cursor-pointer flex flex-col justify-between transition-all group ${
                           isSelected
                             ? "bg-primary/10 border-primary ring-1 ring-primary shadow-xs"
                             : !check.available
-                            ? "bg-red-500/[0.04] border-red-500/20 opacity-70"
+                            ? "bg-destructive/[0.04] border-destructive/20 opacity-70"
                             : "bg-card border-border hover:border-primary/40 hover:bg-muted/20"
                         }`}
                       >
-                        <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="font-mono text-[10px] text-primary font-bold">
-                              {v.barcode}
-                            </span>
-                            <span className="font-bold text-foreground">
-                              {formatCents(art.rental_price_cents)}
-                            </span>
+                        <div className="flex gap-3">
+                          {/* Miniature photo ratio 3:4 avec clic lightbox */}
+                          <div
+                            className="relative w-14 h-19 shrink-0 rounded-md overflow-hidden bg-muted border border-border flex items-center justify-center cursor-zoom-in"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (photoSrc) {
+                                setLightboxArticle({ article: art, photoUrl: photoSrc });
+                              }
+                            }}
+                            title="Agrandir la photo"
+                          >
+                            {photoSrc ? (
+                              <>
+                                <img
+                                  src={photoSrc}
+                                  alt={art.name}
+                                  loading="lazy"
+                                  className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                                />
+                                <div className="absolute inset-0 bg-black/25 opacity-0 hover:opacity-100 flex items-center justify-center transition-opacity text-white">
+                                  <Eye className="w-3.5 h-3.5 drop-shadow-sm" />
+                                </div>
+                              </>
+                            ) : (
+                              <Shirt className="w-5 h-5 text-muted-foreground/40 stroke-1" />
+                            )}
                           </div>
 
-                          <div className="font-semibold text-foreground truncate">
-                            {art.name}
-                          </div>
-                          <div className="text-[11px] text-muted-foreground">
-                            Taille {v.size} ({v.sub_size || "Standard"}) •{" "}
-                            {art.brand}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-0.5">
+                              <span className="font-mono text-[10px] text-primary font-bold">
+                                {v.barcode}
+                              </span>
+                              <span className="font-bold text-foreground">
+                                {formatCents(art.rental_price_cents)}
+                              </span>
+                            </div>
+
+                            <div className="font-semibold text-foreground truncate">
+                              {art.name}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground truncate">
+                              Taille {v.size} ({v.sub_size || "Standard"})
+                            </div>
+                            <div className="text-[10px] text-muted-foreground/80 truncate">
+                              {art.brand}
+                            </div>
                           </div>
                         </div>
 
@@ -417,7 +602,7 @@ export const CreateRentalModal: React.FC = () => {
                             </span>
                           ) : !check.available ? (
                             <span
-                              className="text-[10px] font-bold text-red-400 flex items-center gap-0.5 truncate max-w-[140px]"
+                              className="text-[10px] font-bold text-destructive flex items-center gap-0.5 truncate max-w-[130px]"
                               title={check.conflictReason}
                             >
                               <AlertTriangle className="w-3 h-3 shrink-0" />
@@ -431,8 +616,8 @@ export const CreateRentalModal: React.FC = () => {
                         </div>
                       </div>
                     );
-                  })
-                )}
+                  });
+                })}
             </div>
           </div>
 
@@ -556,6 +741,49 @@ export const CreateRentalModal: React.FC = () => {
                   </span>
                 </div>
 
+                {/* Récapitulatif visuel des pièces sélectionnées */}
+                {selectedVariantIds.length > 0 && (
+                  <div className="py-2 space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">
+                      Pièces sélectionnées ({selectedVariantIds.length})
+                    </span>
+                    {selectedVariantIds.map((varId) => {
+                      for (const art of articles) {
+                        const v = art.variants.find((item) => item.id === varId);
+                        if (v) {
+                          const pSrc = thumbnails[art.id] || (art.photos && art.photos[0]) || "";
+                          return (
+                            <div
+                              key={varId}
+                              className="flex items-center gap-2 p-1.5 rounded-lg bg-background border border-border"
+                            >
+                              <div className="w-8 h-10 rounded bg-muted border border-border overflow-hidden shrink-0 flex items-center justify-center">
+                                {pSrc ? (
+                                  <img src={pSrc} alt={art.name} className="w-full h-full object-cover" />
+                                ) : (
+                                  <Shirt className="w-3.5 h-3.5 text-muted-foreground/40 stroke-1" />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-foreground truncate text-[11px]">
+                                  {art.name}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground truncate">
+                                  Taille {v.size} • {v.barcode}
+                                </div>
+                              </div>
+                              <span className="text-[11px] font-bold text-foreground shrink-0 font-mono">
+                                {formatCents(art.rental_price_cents * financialSummary.rentalDays)}
+                              </span>
+                            </div>
+                          );
+                        }
+                      }
+                      return null;
+                    })}
+                  </div>
+                )}
+
                 <div className="flex justify-between pt-2">
                   <span className="text-muted-foreground">
                     Frais pressing (inclus) :
@@ -634,6 +862,70 @@ export const CreateRentalModal: React.FC = () => {
         </form>
       </div>
 
+      {/* Modal Lightbox pour aperçu haute résolution de la pièce */}
+      {lightboxArticle && (
+        <div
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() => setLightboxArticle(null)}
+        >
+          <div
+            className="w-full max-w-md bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="relative aspect-3/4 max-h-[60vh] w-full bg-black/5 flex items-center justify-center overflow-hidden">
+              <img
+                src={lightboxArticle.photoUrl}
+                alt={lightboxArticle.article.name}
+                className="w-full h-full object-contain"
+              />
+              <button
+                type="button"
+                onClick={() => setLightboxArticle(null)}
+                className="absolute top-2 right-2 p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors"
+                title="Fermer (Échap)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-2 border-t border-border">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-bold text-sm text-foreground">
+                    {lightboxArticle.article.name}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {lightboxArticle.article.brand} • Réf : {lightboxArticle.article.reference}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <div className="font-extrabold text-sm text-primary font-mono">
+                    {formatCents(lightboxArticle.article.rental_price_cents)} / jour
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    Caution : {formatCents(lightboxArticle.article.deposit_price_cents)}
+                  </div>
+                </div>
+              </div>
+
+              {lightboxArticle.article.description && (
+                <p className="text-xs text-muted-foreground line-clamp-3 pt-1 border-t border-border">
+                  {lightboxArticle.article.description}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Scanner QR par Caméra */}
+      <QrCameraScanner
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onCodeScanned={handleCodeScanned}
+        title="Scanner QR Code de l'Article"
+      />
+
       {/* Modal de création rapide de client intégré */}
       <QuickCreateClientModal
         onSuccess={(newClient: CustomerDetailed) => {
@@ -643,3 +935,4 @@ export const CreateRentalModal: React.FC = () => {
     </div>
   );
 };
+

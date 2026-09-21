@@ -1,9 +1,11 @@
-import React, { useState } from "react";
-import { X, Upload, Trash2, Plus, Shirt, Image as ImageIcon } from "lucide-react";
+import React, { useState, useRef } from "react";
+import { X, Upload, Trash2, Plus, Shirt, Image as ImageIcon, Camera } from "lucide-react";
 import { eurosToCents } from "@/lib/utils";
 import { useStockStore } from "@/store/stockStore";
 import type { StockArticle, StockVariant } from "@/types/stock";
 import { toast } from "sonner";
+import { validateImageFile, processArticleImage } from "@/lib/imageProcessor";
+import { photoService } from "@/services/photoService";
 
 export const CreateEditArticleModal: React.FC = () => {
   const { isCreateModalOpen, setCreateModalOpen, addArticle } = useStockStore();
@@ -19,11 +21,19 @@ export const CreateEditArticleModal: React.FC = () => {
   const [depositPrice, setDepositPrice] = useState("");
   const [cleaningFee, setCleaningFee] = useState("15");
 
-  // Multi-photos
-  const [photos, setPhotos] = useState<string[]>([
-    "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=800",
-  ]);
-  const [photoInputUrl, setPhotoInputUrl] = useState("");
+  // Photo principale stockée sous format traité
+  const [photoPreview, setPhotoPreview] = useState<string>("");
+  const [processedPhotoData, setProcessedPhotoData] = useState<{
+    mime: string;
+    dataBase64: string;
+    thumbBase64: string;
+  } | null>(null);
+
+  // Modal capture caméra
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Variantes dynamiques (taille + quantité)
   const [variantsList, setVariantsList] = useState<
@@ -36,15 +46,84 @@ export const CreateEditArticleModal: React.FC = () => {
 
   if (!isCreateModalOpen) return null;
 
-  const handleAddPhoto = () => {
-    if (photoInputUrl.trim()) {
-      setPhotos([...photos, photoInputUrl.trim()]);
-      setPhotoInputUrl("");
+  // Gestion import fichier photo
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      toast.error(validation.error || "Fichier image invalide");
+      return;
+    }
+
+    try {
+      const processed = await processArticleImage(file);
+      setProcessedPhotoData(processed);
+      setPhotoPreview(`data:${processed.mime};base64,${processed.thumbBase64}`);
+      toast.success("Photo importée et optimisée avec succès");
+    } catch (err) {
+      console.error(err);
+      toast.error("Erreur lors de l'optimisation de la photo");
     }
   };
 
-  const handleRemovePhoto = (idx: number) => {
-    setPhotos(photos.filter((_, i) => i !== idx));
+  // Démarrer la capture caméra
+  const handleStartCamera = async () => {
+    try {
+      setIsCameraActive(true);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "environment" },
+        audio: false,
+      });
+      cameraStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => {});
+      }
+    } catch (err) {
+      setIsCameraActive(false);
+      toast.error("Impossible d'accéder à la caméra pour la capture");
+    }
+  };
+
+  // Stopper la caméra
+  const handleStopCamera = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+    setIsCameraActive(false);
+  };
+
+  // Prendre une photo depuis le flux vidéo
+  const handleCaptureFromCamera = async () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 800;
+    canvas.height = video.videoHeight || 600;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+
+    try {
+      const processed = await processArticleImage(dataUrl);
+      setProcessedPhotoData(processed);
+      setPhotoPreview(`data:${processed.mime};base64,${processed.thumbBase64}`);
+      toast.success("Photo capturée avec succès");
+    } catch (err) {
+      toast.error("Erreur lors de la capture photo");
+    } finally {
+      handleStopCamera();
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    setPhotoPreview("");
+    setProcessedPhotoData(null);
   };
 
   const handleAddVariantRow = () => {
@@ -119,7 +198,7 @@ export const CreateEditArticleModal: React.FC = () => {
       sale_price_cents: salePrice ? eurosToCents(salePrice) : undefined,
       deposit_price_cents: depositPrice ? eurosToCents(depositPrice) : rentCents * 3,
       cleaning_fee_cents: eurosToCents(cleaningFee || "0"),
-      photos: photos.length > 0 ? photos : [
+      photos: photoPreview ? [photoPreview] : [
         "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=800",
       ],
       variants: generatedVariants,
@@ -131,6 +210,17 @@ export const CreateEditArticleModal: React.FC = () => {
     };
 
     addArticle(newArticle);
+
+    // Enregistrement persistant dans SQLite si une photo a été importée / capturée
+    if (processedPhotoData) {
+      photoService.setPhoto({
+        article_id: newArticle.id,
+        mime: processedPhotoData.mime,
+        data_base64: processedPhotoData.dataBase64,
+        thumb_base64: processedPhotoData.thumbBase64,
+      }).catch((err) => console.warn("Erreur sauvegarde SQLite photo:", err));
+    }
+
     toast.success(`Article "${newArticle.name}" créé avec ${generatedVariants.length} exemplaire(s) en stock !`);
     setCreateModalOpen(false);
   };
@@ -293,48 +383,93 @@ export const CreateEditArticleModal: React.FC = () => {
             </div>
           </div>
 
-          {/* Section 2 : Upload de plusieurs photos */}
+          {/* Section 2 : Photo principale du modèle */}
           <div className="space-y-3 pt-4 border-t border-border">
             <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
               <ImageIcon className="w-3.5 h-3.5" />
-              2. Galerie Photos du Modèle ({photos.length} image(s))
+              2. Photo Principale du Modèle (Stockée en base SQLite)
             </h4>
 
-            {/* Galerie d'aperçus */}
-            <div className="flex flex-wrap gap-3">
-              {photos.map((url, i) => (
-                <div
-                  key={i}
-                  className="relative w-24 h-24 rounded-lg overflow-hidden border border-border group bg-muted"
-                >
-                  <img src={url} alt="Photo" className="w-full h-full object-cover" />
+            <div className="flex flex-col sm:flex-row items-start gap-4">
+              {/* Aperçu ou placeholder */}
+              <div className="relative w-32 h-40 rounded-lg overflow-hidden border border-border bg-muted shrink-0 flex items-center justify-center group">
+                {photoPreview ? (
+                  <>
+                    <img src={photoPreview} alt="Aperçu modèle" className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={handleRemovePhoto}
+                      className="absolute top-1 right-1 p-1 rounded-md bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Supprimer la photo"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-2 text-center text-muted-foreground">
+                    <Shirt className="w-8 h-8 stroke-1 text-muted-foreground/50 mb-1" />
+                    <span className="text-[10px]">Aucune photo</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Actions d'ajout : Fichier + Caméra */}
+              <div className="flex-1 space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  Importez une image (JPEG, PNG, WebP max 10 Mo) ou prenez une photo instantanée avec la caméra de l'ordinateur. La photo sera automatiquement optimisée et redimensionnée.
+                </p>
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept="image/*"
+                    className="hidden"
+                  />
                   <button
                     type="button"
-                    onClick={() => handleRemovePhoto(i)}
-                    className="absolute top-1 right-1 p-1 rounded-full bg-red-600/80 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="h-8 px-3 rounded-md bg-secondary hover:bg-muted text-xs font-medium text-foreground border border-border flex items-center gap-1.5"
                   >
-                    <Trash2 className="w-3 h-3" />
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Choisir un fichier</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={isCameraActive ? handleStopCamera : handleStartCamera}
+                    className="h-8 px-3 rounded-md bg-secondary hover:bg-muted text-xs font-medium text-foreground border border-border flex items-center gap-1.5"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{isCameraActive ? "Fermer la caméra" : "Prendre avec la caméra"}</span>
                   </button>
                 </div>
-              ))}
 
-              {/* Ajout rapide d'URL photo */}
-              <div className="flex items-center gap-2 w-full mt-2">
-                <input
-                  type="url"
-                  value={photoInputUrl}
-                  onChange={(e) => setPhotoInputUrl(e.target.value)}
-                  placeholder="URL d'une nouvelle photo (Unsplash, CDN, etc.)..."
-                  className="flex-1 h-9 px-3 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                />
-                <button
-                  type="button"
-                  onClick={handleAddPhoto}
-                  className="px-3 h-9 rounded-lg bg-secondary hover:bg-muted text-xs font-medium text-foreground border border-border flex items-center gap-1.5 shrink-0"
-                >
-                  <Upload className="w-3.5 h-3.5 text-primary" />
-                  Ajouter photo
-                </button>
+                {/* Volet actif de capture caméra */}
+                {isCameraActive && (
+                  <div className="mt-3 p-3 rounded-lg border border-border bg-card space-y-2 max-w-sm">
+                    <div className="aspect-4/3 w-full bg-black rounded overflow-hidden relative">
+                      <video ref={videoRef} className="w-full h-full object-cover" autoPlay playsInline muted />
+                    </div>
+                    <div className="flex justify-between items-center pt-1">
+                      <button
+                        type="button"
+                        onClick={handleCaptureFromCamera}
+                        className="h-7 px-3 rounded-md bg-foreground text-background text-xs font-medium hover:opacity-90"
+                      >
+                        Capturer cette vue
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleStopCamera}
+                        className="h-7 px-2.5 rounded-md text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Annuler
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
