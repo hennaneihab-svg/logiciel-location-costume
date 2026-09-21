@@ -370,3 +370,41 @@ pub struct ReservedLine {
     pub mode_gestion: String,
 }
 
+// ============================================================================
+// PHOTOS D'ARTICLES
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ArticlePhoto {
+    pub id: String,
+    pub article_id: String,
+    pub mime: String,
+    pub data: Vec<u8>,
+    pub thumb: Vec<u8>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetArticlePhotoDto {
+    pub article_id: String,
+    pub mime: String,
+    pub data_base64: String,
+    pub thumb_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArticlePhotoThumbDto {
+    pub article_id: String,
+    pub photo_id: String,
+    pub mime: String,
+    pub thumb_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArticlePhotoFullDto {
+    pub photo_id: String,
+    pub article_id: String,
+    pub mime: String,
+    pub data_base64: String,
+}
+

@@ -197,3 +197,93 @@ async fn test_backup_and_restore_cycle_with_pool_reconnect() {
     restored_pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[tokio::test]
+async fn test_article_photos_lifecycle() {
+    let test_dir = std::env::temp_dir().join(format!("test_atelier_photos_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    // 1. Initialiser le pool et exécuter toutes les migrations (dont 0004)
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db pool");
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // 2. Insérer catégorie et article requis
+    sqlx::query(
+        "INSERT OR IGNORE INTO categories (id, nom, type, description, created_at)
+         VALUES ('cat-photo-test', 'Catégorie Photos Test', 'costume', 'Test photos', ?)"
+    )
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Failed to insert category");
+
+    let art_id = "art-photo-test-01";
+    sqlx::query(
+        "INSERT INTO articles (
+            id, categorie_id, reference, nom, marque, couleur, description,
+            prix_location_centimes, caution_suggeree_centimes, frais_nettoyage_centimes,
+            est_actif, created_at, updated_at
+        ) VALUES (?, 'cat-photo-test', 'REF-PHOTO-001', 'Costume Avec Photo', 'Prestige', 'Bleu',
+            'Description photo', 30000, 60000, 2000, 1, ?, ?)"
+    )
+    .bind(art_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Failed to insert test article");
+
+    // 3. Insérer une photo avec BLOB data et thumb
+    let dummy_data = vec![1, 2, 3, 4, 5, 6, 7, 8];
+    let dummy_thumb = vec![1, 2, 3, 4];
+    let photo_id = "photo-test-01";
+
+    sqlx::query(
+        "INSERT INTO article_photos (id, article_id, mime, data, thumb, created_at)
+         VALUES (?, ?, 'image/webp', ?, ?, ?)"
+    )
+    .bind(photo_id)
+    .bind(art_id)
+    .bind(&dummy_data)
+    .bind(&dummy_thumb)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Failed to insert article photo");
+
+    // 4. Lecture et vérification
+    let fetched: Option<(String, String, Vec<u8>, Vec<u8>)> = sqlx::query_as(
+        "SELECT id, mime, data, thumb FROM article_photos WHERE article_id = ?"
+    )
+    .bind(art_id)
+    .fetch_optional(&pool)
+    .await
+    .expect("Failed to fetch photo");
+
+    assert!(fetched.is_some(), "La photo doit être trouvée");
+    let (f_id, f_mime, f_data, f_thumb) = fetched.unwrap();
+    assert_eq!(f_id, photo_id);
+    assert_eq!(f_mime, "image/webp");
+    assert_eq!(f_data, dummy_data);
+    assert_eq!(f_thumb, dummy_thumb);
+
+    // 5. Test ON DELETE CASCADE : suppression de l'article doit supprimer automatiquement la photo
+    sqlx::query("DELETE FROM articles WHERE id = ?")
+        .bind(art_id)
+        .execute(&pool)
+        .await
+        .expect("Failed to delete article");
+
+    let orphaned: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM article_photos WHERE id = ?"
+    )
+    .bind(photo_id)
+    .fetch_optional(&pool)
+    .await
+    .expect("Failed to query orphaned photo");
+
+    assert!(orphaned.is_none(), "La photo DOIT être supprimée en cascade quand l'article est supprimé");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}

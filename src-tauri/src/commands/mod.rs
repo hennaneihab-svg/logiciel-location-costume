@@ -1065,4 +1065,147 @@ pub async fn reserve_pack(dto: ReservePackDto, state: State<'_, DbState>) -> Res
     Ok(reserved_lines)
 }
 
+// ----------------------------------------------------------------------------
+// 10. PHOTOS D'ARTICLES (SQLITE BLOB)
+// ----------------------------------------------------------------------------
+
+#[command]
+pub async fn set_article_photo(
+    dto: SetArticlePhotoDto,
+    state: State<'_, DbState>,
+) -> Result<ArticlePhotoThumbDto, AppError> {
+    use base64::Engine as _;
+    let engine = base64::engine::general_purpose::STANDARD;
+
+    if dto.article_id.trim().is_empty() {
+        return Err(AppError::Validation("article_id est requis".to_string()));
+    }
+
+    let data_bytes = engine
+        .decode(&dto.data_base64)
+        .map_err(|e| AppError::Validation(format!("Données image base64 invalides : {}", e)))?;
+    let thumb_bytes = engine
+        .decode(&dto.thumb_base64)
+        .map_err(|e| AppError::Validation(format!("Miniature base64 invalide : {}", e)))?;
+
+    let photo_id = format!("photo-{}", chrono::Utc::now().timestamp_millis());
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Remplacement ou insertion : on supprime d'abord les anciennes photos de l'article pour avoir 1 photo principale par modèle
+    sqlx::query("DELETE FROM article_photos WHERE article_id = ?")
+        .bind(&dto.article_id)
+        .execute(&state.pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+    sqlx::query(
+        "INSERT INTO article_photos (id, article_id, mime, data, thumb, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)"
+    )
+    .bind(&photo_id)
+    .bind(&dto.article_id)
+    .bind(&dto.mime)
+    .bind(&data_bytes)
+    .bind(&thumb_bytes)
+    .bind(&now)
+    .execute(&state.pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+
+    Ok(ArticlePhotoThumbDto {
+        article_id: dto.article_id,
+        photo_id,
+        mime: dto.mime,
+        thumb_base64: dto.thumb_base64,
+    })
+}
+
+#[command]
+pub async fn get_article_photo_thumb(
+    article_ids: Vec<String>,
+    state: State<'_, DbState>,
+) -> Result<Vec<ArticlePhotoThumbDto>, AppError> {
+    use base64::Engine as _;
+    let engine = base64::engine::general_purpose::STANDARD;
+
+    if article_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut results = Vec::new();
+    // Requête par lot : itère ou requête SQLite avec IN clause
+    for chunk in article_ids.chunks(50) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query_str = format!(
+            "SELECT id, article_id, mime, thumb FROM article_photos WHERE article_id IN ({})",
+            placeholders
+        );
+
+        let mut query = sqlx::query_as::<_, (String, String, String, Vec<u8>)>(&query_str);
+        for id in chunk {
+            query = query.bind(id);
+        }
+
+        let rows = query
+            .fetch_all(&state.pool)
+            .await
+            .map_err(AppError::DatabaseError)?;
+
+        for (photo_id, art_id, mime, thumb_blob) in rows {
+            let thumb_b64 = engine.encode(&thumb_blob);
+            results.push(ArticlePhotoThumbDto {
+                article_id: art_id,
+                photo_id,
+                mime,
+                thumb_base64: thumb_b64,
+            });
+        }
+    }
+
+    Ok(results)
+}
+
+#[command]
+pub async fn get_article_photo_full(
+    article_id: String,
+    state: State<'_, DbState>,
+) -> Result<Option<ArticlePhotoFullDto>, AppError> {
+    use base64::Engine as _;
+    let engine = base64::engine::general_purpose::STANDARD;
+
+    let row = sqlx::query_as::<_, (String, String, String, Vec<u8>)>(
+        "SELECT id, article_id, mime, data FROM article_photos WHERE article_id = ? LIMIT 1"
+    )
+    .bind(&article_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+
+    if let Some((photo_id, art_id, mime, data_blob)) = row {
+        let data_b64 = engine.encode(&data_blob);
+        Ok(Some(ArticlePhotoFullDto {
+            photo_id,
+            article_id: art_id,
+            mime,
+            data_base64: data_b64,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+#[command]
+pub async fn delete_article_photo(
+    article_id: String,
+    state: State<'_, DbState>,
+) -> Result<bool, AppError> {
+    let res = sqlx::query("DELETE FROM article_photos WHERE article_id = ?")
+        .bind(&article_id)
+        .execute(&state.pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+    Ok(res.rows_affected() > 0)
+}
+
 

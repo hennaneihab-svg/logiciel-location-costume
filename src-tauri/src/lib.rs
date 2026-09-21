@@ -57,6 +57,11 @@ pub fn run() {
             // Packs
             commands::list_packs,
             commands::reserve_pack,
+            // Photos
+            commands::set_article_photo,
+            commands::get_article_photo_thumb,
+            commands::get_article_photo_full,
+            commands::delete_article_photo,
         ])
         .run(tauri::generate_context!())
         .expect("Erreur fatale lors du lancement de l'application Tauri");
