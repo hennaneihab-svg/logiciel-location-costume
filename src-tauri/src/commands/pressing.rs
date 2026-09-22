@@ -412,6 +412,7 @@ pub async fn execute_create_pressing_dispatch(
         let today = today_local();
         let now = chrono::Utc::now().to_rfc3339();
         let mut ids = Vec::new();
+        let mut skipped_messages = Vec::new();
 
         for var_id in &dto.variante_ids {
             // 1. Récupérer variante et article
@@ -429,6 +430,26 @@ pub async fn execute_create_pressing_dispatch(
 
             let art_nom: String = var_row.get("article_nom");
             let _art_ref: String = var_row.get("article_ref");
+
+            // 1b. Refus si la variante a déjà un envoi pressing actif ('envoye' ou 'en_traitement')
+            let active_dispatch: Option<(String,)> = sqlx::query_as(
+                "SELECT numero_envoi FROM pressing_envois
+                 WHERE variante_id = ? AND statut IN ('envoye', 'en_traitement')
+                 ORDER BY created_at DESC LIMIT 1"
+            )
+            .bind(var_id)
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+            if let Some((num_actif,)) = active_dispatch {
+                let msg = format!(
+                    "La pièce '{}' est déjà envoyée au pressing sous {}",
+                    art_nom, num_actif
+                );
+                skipped_messages.push(msg);
+                continue;
+            }
 
             // 2. Refus si la variante est actuellement en cours de location
             let active_rental = sqlx::query(
@@ -527,6 +548,13 @@ pub async fn execute_create_pressing_dispatch(
                 .map_err(map_sqlite_err)?;
 
             ids.push(envoi_id);
+        }
+
+        if ids.is_empty() {
+            if let Some(first_msg) = skipped_messages.into_iter().next() {
+                return Err(AppError::Validation(first_msg));
+            }
+            return Err(AppError::Validation("Aucune pièce valide à envoyer au pressing.".to_string()));
         }
 
         Ok(ids)

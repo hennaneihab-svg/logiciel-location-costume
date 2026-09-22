@@ -450,3 +450,236 @@ async fn test_deactivate_provider_with_active_dispatches() {
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+/// 9. test_duplicate_dispatch_rejection_and_multi_variant_partial
+/// - Une variante déjà envoyée au pressing (statut envoye) est refusée avec le numéro de son envoi actif.
+/// - Un lot multi-pièces contenant une variante active et une disponible : la variante active est refusée
+///   sans faire échouer le lot ; la variante disponible est envoyée avec succès.
+#[tokio::test]
+async fn test_duplicate_dispatch_rejection_and_multi_variant_partial() {
+    let test_dir = std::env::temp_dir().join(format!("test_dispatch_dup_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    // 1. Premier envoi pour var-003
+    let dto1 = CreatePressingDispatchDto {
+        variante_ids: vec!["var-003".to_string()],
+        prestataire_id: None,
+        location_id: None,
+        type_traitement: Some("nettoyage".to_string()),
+        motif: Some("usage_normal".to_string()),
+        cout_centimes: Some(100000),
+        date_retour_prevue: "2026-10-20".to_string(),
+        notes: None,
+        force: false,
+        utilisateur_id: Some("usr-001".to_string()),
+    };
+    let dispatches = execute_create_pressing_dispatch(&pool, dto1).await.expect("Premier envoi échoué");
+    assert_eq!(dispatches.len(), 1);
+    let num_actif = dispatches[0].numero_envoi.clone();
+
+    // 2. Second envoi pour var-003 seule -> doit être refusé avec le numéro actif
+    let dto2 = CreatePressingDispatchDto {
+        variante_ids: vec!["var-003".to_string()],
+        prestataire_id: None,
+        location_id: None,
+        type_traitement: Some("repassage".to_string()),
+        motif: Some("retouche".to_string()),
+        cout_centimes: Some(50000),
+        date_retour_prevue: "2026-10-22".to_string(),
+        notes: None,
+        force: false,
+        utilisateur_id: Some("usr-001".to_string()),
+    };
+    let err2 = execute_create_pressing_dispatch(&pool, dto2).await.unwrap_err();
+    let err_msg = err2.to_string();
+    assert!(
+        err_msg.contains(&num_actif),
+        "L'erreur doit citer le numéro d'envoi actif {}. Reçu : {}",
+        num_actif,
+        err_msg
+    );
+    assert!(
+        err_msg.contains("déjà envoyée au pressing sous"),
+        "Message attendu de non-double envoi. Reçu : {}",
+        err_msg
+    );
+
+    // 3. Lot mixte : var-003 (active) et var-004 (disponible)
+    // var-003 est ignorée/refusée, var-004 est envoyée sans bloquer le lot
+    let dto_mixte = CreatePressingDispatchDto {
+        variante_ids: vec!["var-003".to_string(), "var-004".to_string()],
+        prestataire_id: None,
+        location_id: None,
+        type_traitement: Some("nettoyage".to_string()),
+        motif: Some("usage_normal".to_string()),
+        cout_centimes: Some(80000),
+        date_retour_prevue: "2026-10-25".to_string(),
+        notes: None,
+        force: false,
+        utilisateur_id: Some("usr-001".to_string()),
+    };
+    let dispatches_mixte = execute_create_pressing_dispatch(&pool, dto_mixte)
+        .await
+        .expect("Le lot mixte doit réussir pour la pièce disponible");
+    assert_eq!(dispatches_mixte.len(), 1, "Seule var-004 doit générer un envoi");
+    assert_eq!(dispatches_mixte[0].variante_id, "var-004");
+
+    // Vérifier que var-004 est passée au statut au_pressing
+    let st4: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-004'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(st4.0, "au_pressing");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+/// 10. test_dispatch_allowed_after_received_cancelled_or_problem
+/// - Un envoi 'recu', 'annule' ou 'probleme' ne bloque PAS un nouvel envoi (seuls 'envoye' et 'en_traitement' bloquent).
+/// - Un envoi avec statut 'en_traitement' bloque également le nouvel envoi.
+#[tokio::test]
+async fn test_dispatch_allowed_after_received_cancelled_or_problem() {
+    let test_dir = std::env::temp_dir().join(format!("test_dispatch_states_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    let create_dto = |var_id: &str| CreatePressingDispatchDto {
+        variante_ids: vec![var_id.to_string()],
+        prestataire_id: None,
+        location_id: None,
+        type_traitement: Some("nettoyage".to_string()),
+        motif: Some("usage_normal".to_string()),
+        cout_centimes: Some(50000),
+        date_retour_prevue: "2026-10-20".to_string(),
+        notes: None,
+        force: false,
+        utilisateur_id: Some("usr-001".to_string()),
+    };
+
+    // --- Cas 1 : Envoi terminé par réception (recu) ---
+    let d1 = execute_create_pressing_dispatch(&pool, create_dto("var-006")).await.unwrap();
+    execute_receive_pressing_dispatch(&pool, &d1[0].id, None, None).await.unwrap();
+    // Le nouvel envoi pour var-006 doit être accepté
+    let d1_bis = execute_create_pressing_dispatch(&pool, create_dto("var-006")).await;
+    assert!(d1_bis.is_ok(), "Un envoi recu ne doit pas bloquer un nouvel envoi");
+
+    // --- Cas 2 : Envoi annulé (annule) ---
+    let d1_bis_id = d1_bis.unwrap()[0].id.clone();
+    execute_cancel_pressing_dispatch(&pool, &d1_bis_id).await.unwrap();
+    // Le statut est annule -> un nouvel envoi pour var-006 doit être accepté
+    let d1_ter = execute_create_pressing_dispatch(&pool, create_dto("var-006")).await;
+    assert!(d1_ter.is_ok(), "Un envoi annule ne doit pas bloquer un nouvel envoi");
+
+    // --- Cas 3 : Envoi en problème (probleme) ---
+    let d2 = execute_create_pressing_dispatch(&pool, create_dto("var-012")).await.unwrap();
+    execute_mark_pressing_problem(&pool, &d2[0].id, Some("Tache tenace".to_string())).await.unwrap();
+    // Le statut est probleme -> un nouvel envoi pressing doit être possible (par ex. pour pressing spécialisé)
+    let d2_bis = execute_create_pressing_dispatch(&pool, create_dto("var-012")).await;
+    assert!(d2_bis.is_ok(), "Un envoi en probleme ne doit pas bloquer un nouvel envoi pressing");
+
+    // --- Cas 4 : Statut en_traitement -> DOIT BLOQUER ---
+    let d2_bis_id = d2_bis.unwrap()[0].id.clone();
+    let num_en_traitement: (String,) = sqlx::query_as("SELECT numero_envoi FROM pressing_envois WHERE id = ?")
+        .bind(&d2_bis_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Passer l'envoi au statut 'en_traitement'
+    sqlx::query("UPDATE pressing_envois SET statut = 'en_traitement' WHERE id = ?")
+        .bind(&d2_bis_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let err_en_traitement = execute_create_pressing_dispatch(&pool, create_dto("var-012")).await.unwrap_err();
+    let err_msg = err_en_traitement.to_string();
+    assert!(
+        err_msg.contains(&num_en_traitement.0),
+        "Le statut en_traitement doit bloquer et citer le numéro actif {}. Reçu : {}",
+        num_en_traitement.0,
+        err_msg
+    );
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+/// 11. test_concurrent_create_pressing_dispatch_race_condition
+/// Deux appels concurrents sur la même variante sous BEGIN IMMEDIATE :
+/// Exactement un seul appel réussit (200/Ok), l'autre reçoit un refus explicite
+/// citant le numéro d'envoi actif créé par le premier (pas une erreur générique de base de données).
+#[tokio::test]
+async fn test_concurrent_create_pressing_dispatch_race_condition() {
+    let test_dir = std::env::temp_dir().join(format!("test_dispatch_concurrency_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    let pool_arc = Arc::new(pool.clone());
+    let pool1 = pool_arc.clone();
+    let pool2 = pool_arc.clone();
+
+    let dto1 = CreatePressingDispatchDto {
+        variante_ids: vec!["var-009".to_string()],
+        prestataire_id: None,
+        location_id: None,
+        type_traitement: Some("nettoyage".to_string()),
+        motif: Some("concurrence_1".to_string()),
+        cout_centimes: Some(100000),
+        date_retour_prevue: "2026-10-30".to_string(),
+        notes: None,
+        force: false,
+        utilisateur_id: Some("usr-001".to_string()),
+    };
+
+    let dto2 = CreatePressingDispatchDto {
+        variante_ids: vec!["var-009".to_string()],
+        prestataire_id: None,
+        location_id: None,
+        type_traitement: Some("nettoyage".to_string()),
+        motif: Some("concurrence_2".to_string()),
+        cout_centimes: Some(100000),
+        date_retour_prevue: "2026-10-30".to_string(),
+        notes: None,
+        force: false,
+        utilisateur_id: Some("usr-001".to_string()),
+    };
+
+    let h1 = tokio::spawn(async move {
+        execute_create_pressing_dispatch(&pool1, dto1).await
+    });
+    let h2 = tokio::spawn(async move {
+        execute_create_pressing_dispatch(&pool2, dto2).await
+    });
+
+    let res1 = h1.await.unwrap();
+    let res2 = h2.await.unwrap();
+
+    let (ok_res, err_res) = match (res1, res2) {
+        (Ok(succ), Err(err)) => (succ, err),
+        (Err(err), Ok(succ)) => (succ, err),
+        (Ok(_), Ok(_)) => panic!("Course critique : les deux envois ont réussi pour la même variante !"),
+        (Err(e1), Err(e2)) => panic!("Les deux envois ont échoué : e1={:?}, e2={:?}", e1, e2),
+    };
+
+    assert_eq!(ok_res.len(), 1);
+    let created_number = &ok_res[0].numero_envoi;
+
+    let err_msg = err_res.to_string();
+    assert!(
+        err_msg.contains(created_number),
+        "L'appel refusé doit citer le numéro d'envoi actif créé ({}), reçu: {}",
+        created_number,
+        err_msg
+    );
+    assert!(
+        err_msg.contains("déjà envoyée au pressing sous"),
+        "L'appel refusé doit recevoir un message de validation explicite, pas une erreur SQLite générique : {}",
+        err_msg
+    );
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
