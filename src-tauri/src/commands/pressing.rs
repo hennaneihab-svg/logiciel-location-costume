@@ -158,27 +158,37 @@ pub async fn execute_create_pressing_provider(
     let now = chrono::Utc::now().to_rfc3339();
     let delai = dto.delai_defaut_jours.unwrap_or(3).max(1);
 
-    sqlx::query(
-        "INSERT INTO pressing_prestataires (
-            id, nom, contact_nom, telephone, adresse, tarif_defaut_centimes,
-            delai_defaut_jours, actif, notes, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
-    )
-    .bind(&id)
-    .bind(nom)
-    .bind(&dto.contact_nom)
-    .bind(&dto.telephone)
-    .bind(&dto.adresse)
-    .bind(dto.tarif_defaut_centimes)
-    .bind(delai)
-    .bind(&dto.notes)
-    .bind(&now)
-    .bind(&now)
-    .execute(&mut *tx.conn)
-    .await
-    .map_err(map_sqlite_err)?;
+    match async {
+        sqlx::query(
+            "INSERT INTO pressing_prestataires (
+                id, nom, contact_nom, telephone, adresse, tarif_defaut_centimes,
+                delai_defaut_jours, actif, notes, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"
+        )
+        .bind(&id)
+        .bind(nom)
+        .bind(&dto.contact_nom)
+        .bind(&dto.telephone)
+        .bind(&dto.adresse)
+        .bind(dto.tarif_defaut_centimes)
+        .bind(delai)
+        .bind(&dto.notes)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
 
-    tx.commit().await?;
+        Ok(())
+    }.await {
+        Ok(_) => {
+            tx.commit().await?;
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+    }
 
     Ok(PressingProvider {
         id,
@@ -208,56 +218,66 @@ pub async fn execute_update_pressing_provider(
     let now = chrono::Utc::now().to_rfc3339();
     let delai = dto.delai_defaut_jours.max(1);
 
-    let rows_affected = sqlx::query(
-        "UPDATE pressing_prestataires SET
-            nom = ?, contact_nom = ?, telephone = ?, adresse = ?,
-            tarif_defaut_centimes = ?, delai_defaut_jours = ?, notes = ?, updated_at = ?
-         WHERE id = ?"
-    )
-    .bind(nom)
-    .bind(&dto.contact_nom)
-    .bind(&dto.telephone)
-    .bind(&dto.adresse)
-    .bind(dto.tarif_defaut_centimes)
-    .bind(delai)
-    .bind(&dto.notes)
-    .bind(&now)
-    .bind(&dto.id)
-    .execute(&mut *tx.conn)
-    .await
-    .map_err(map_sqlite_err)?
-    .rows_affected();
+    let provider = match async {
+        let rows_affected = sqlx::query(
+            "UPDATE pressing_prestataires SET
+                nom = ?, contact_nom = ?, telephone = ?, adresse = ?,
+                tarif_defaut_centimes = ?, delai_defaut_jours = ?, notes = ?, updated_at = ?
+             WHERE id = ?"
+        )
+        .bind(nom)
+        .bind(&dto.contact_nom)
+        .bind(&dto.telephone)
+        .bind(&dto.adresse)
+        .bind(dto.tarif_defaut_centimes)
+        .bind(delai)
+        .bind(&dto.notes)
+        .bind(&now)
+        .bind(&dto.id)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?
+        .rows_affected();
 
-    if rows_affected == 0 {
-        return Err(AppError::NotFound(format!("Prestataire introuvable : {}", dto.id)));
-    }
+        if rows_affected == 0 {
+            return Err(AppError::NotFound(format!("Prestataire introuvable : {}", dto.id)));
+        }
 
-    let row = sqlx::query(
-        "SELECT id, nom, contact_nom, telephone, adresse, tarif_defaut_centimes,
-                delai_defaut_jours, actif, notes, created_at, updated_at
-         FROM pressing_prestataires WHERE id = ?"
-    )
-    .bind(&dto.id)
-    .fetch_one(&mut *tx.conn)
-    .await
-    .map_err(map_sqlite_err)?;
+        let row = sqlx::query(
+            "SELECT id, nom, contact_nom, telephone, adresse, tarif_defaut_centimes,
+                    delai_defaut_jours, actif, notes, created_at, updated_at
+             FROM pressing_prestataires WHERE id = ?"
+        )
+        .bind(&dto.id)
+        .fetch_one(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
 
-    let actif_int: i64 = row.get("actif");
-    let provider = PressingProvider {
-        id: row.get("id"),
-        nom: row.get("nom"),
-        contact_nom: row.get("contact_nom"),
-        telephone: row.get("telephone"),
-        adresse: row.get("adresse"),
-        tarif_defaut_centimes: row.get("tarif_defaut_centimes"),
-        delai_defaut_jours: row.get("delai_defaut_jours"),
-        actif: actif_int == 1,
-        notes: row.get("notes"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
+        let actif_int: i64 = row.get("actif");
+        Ok(PressingProvider {
+            id: row.get("id"),
+            nom: row.get("nom"),
+            contact_nom: row.get("contact_nom"),
+            telephone: row.get("telephone"),
+            adresse: row.get("adresse"),
+            tarif_defaut_centimes: row.get("tarif_defaut_centimes"),
+            delai_defaut_jours: row.get("delai_defaut_jours"),
+            actif: actif_int == 1,
+            notes: row.get("notes"),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        })
+    }.await {
+        Ok(p) => {
+            tx.commit().await?;
+            p
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
     };
 
-    tx.commit().await?;
     Ok(provider)
 }
 
@@ -270,23 +290,33 @@ pub async fn execute_set_pressing_provider_active(
     let now = chrono::Utc::now().to_rfc3339();
     let actif_val = if actif { 1 } else { 0 };
 
-    let rows_affected = sqlx::query(
-        "UPDATE pressing_prestataires SET actif = ?, updated_at = ? WHERE id = ?"
-    )
-    .bind(actif_val)
-    .bind(&now)
-    .bind(id)
-    .execute(&mut *tx.conn)
-    .await
-    .map_err(map_sqlite_err)?
-    .rows_affected();
+    match async {
+        let rows_affected = sqlx::query(
+            "UPDATE pressing_prestataires SET actif = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(actif_val)
+        .bind(&now)
+        .bind(id)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?
+        .rows_affected();
 
-    if rows_affected == 0 {
-        return Err(AppError::NotFound(format!("Prestataire introuvable : {}", id)));
+        if rows_affected == 0 {
+            return Err(AppError::NotFound(format!("Prestataire introuvable : {}", id)));
+        }
+
+        Ok(())
+    }.await {
+        Ok(_) => {
+            tx.commit().await?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            Err(e)
+        }
     }
-
-    tx.commit().await?;
-    Ok(())
 }
 
 pub async fn execute_list_pressing_providers(
@@ -341,164 +371,175 @@ pub async fn execute_create_pressing_dispatch(
 
     let mut tx = ImmediateTx::begin(pool).await?;
 
-    // Résolution utilisateur
-    let user_id = if let Some(ref uid) = dto.utilisateur_id {
-        if !uid.trim().is_empty() {
-            let user_exists: Option<(String,)> = sqlx::query_as(
-                "SELECT id FROM utilisateurs WHERE id = ? AND est_actif = 1"
+    let created_ids = match async {
+        // Résolution utilisateur
+        let user_id = if let Some(ref uid) = dto.utilisateur_id {
+            if !uid.trim().is_empty() {
+                let user_exists: Option<(String,)> = sqlx::query_as(
+                    "SELECT id FROM utilisateurs WHERE id = ? AND est_actif = 1"
+                )
+                .bind(uid)
+                .fetch_optional(&mut *tx.conn)
+                .await
+                .map_err(map_sqlite_err)?;
+
+                if user_exists.is_none() {
+                    return Err(AppError::Validation(format!("Utilisateur introuvable ou inactif : {}", uid)));
+                }
+                uid.clone()
+            } else {
+                "usr-001".to_string()
+            }
+        } else {
+            "usr-001".to_string()
+        };
+
+        // Vérification du prestataire si fourni
+        if let Some(ref prv_id) = dto.prestataire_id {
+            let prv_exists: Option<(String,)> = sqlx::query_as(
+                "SELECT id FROM pressing_prestataires WHERE id = ? AND actif = 1"
             )
-            .bind(uid)
+            .bind(prv_id)
             .fetch_optional(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?;
 
-            if user_exists.is_none() {
-                return Err(AppError::Validation(format!("Utilisateur introuvable ou inactif : {}", uid)));
-            }
-            uid.clone()
-        } else {
-            "usr-001".to_string()
-        }
-    } else {
-        "usr-001".to_string()
-    };
-
-    // Vérification du prestataire si fourni
-    if let Some(ref prv_id) = dto.prestataire_id {
-        let prv_exists: Option<(String,)> = sqlx::query_as(
-            "SELECT id FROM pressing_prestataires WHERE id = ? AND actif = 1"
-        )
-        .bind(prv_id)
-        .fetch_optional(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?;
-
-        if prv_exists.is_none() {
-            return Err(AppError::Validation(format!("Prestataire de pressing introuvable ou inactif : {}", prv_id)));
-        }
-    }
-
-    let today = today_local();
-    let now = chrono::Utc::now().to_rfc3339();
-    let mut created_ids = Vec::new();
-
-    for var_id in &dto.variante_ids {
-        // 1. Récupérer variante et article
-        let var_row = sqlx::query(
-            "SELECT v.id, v.article_id, v.taille, a.nom as article_nom, a.reference as article_ref
-             FROM variantes_stock v
-             JOIN articles a ON v.article_id = a.id
-             WHERE v.id = ?"
-        )
-        .bind(var_id)
-        .fetch_optional(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?
-        .ok_or_else(|| AppError::Validation(format!("Variante introuvable : {}", var_id)))?;
-
-        let art_nom: String = var_row.get("article_nom");
-        let _art_ref: String = var_row.get("article_ref");
-
-        // 2. Refus si la variante est actuellement en cours de location
-        let active_rental = sqlx::query(
-            "SELECT l.numero_location
-             FROM lignes_location ll
-             JOIN locations l ON ll.location_id = l.id
-             WHERE ll.variante_id = ?
-               AND ll.est_rendu = 0
-               AND l.statut IN ('en_cours', 'en_retard', 'litige')
-             LIMIT 1"
-        )
-        .bind(var_id)
-        .fetch_optional(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?;
-
-        if let Some(r) = active_rental {
-            let num_loc: String = r.get("numero_location");
-            return Err(AppError::Validation(format!(
-                "La pièce '{}' est actuellement sortie sur le contrat {} (non rendue). Envoi pressing impossible.",
-                art_nom, num_loc
-            )));
-        }
-
-        // 3. Vérification des réservations futures en conflit
-        let future_conflict = sqlx::query(
-            "SELECT l.numero_location, l.date_retrait_prevue
-             FROM lignes_location ll
-             JOIN locations l ON ll.location_id = l.id
-             WHERE ll.variante_id = ?
-               AND ll.est_rendu = 0
-               AND l.statut = 'reserve'
-               AND l.date_retrait_prevue < ?
-             ORDER BY l.date_retrait_prevue ASC
-             LIMIT 1"
-        )
-        .bind(var_id)
-        .bind(&dto.date_retour_prevue)
-        .fetch_optional(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?;
-
-        let mut item_notes = dto.notes.clone().unwrap_or_default();
-        if let Some(fc) = future_conflict {
-            let c_num: String = fc.get("numero_location");
-            let c_pickup: String = fc.get("date_retrait_prevue");
-
-            if !dto.force {
-                return Err(AppError::Validation(format!(
-                    "Conflit de date pour '{}' : réservée pour le contrat {} dès le {}, avant la date de retour prévue du pressing ({}). Confirmez avec 'force' pour déroger.",
-                    art_nom, c_num, c_pickup, dto.date_retour_prevue
-                )));
-            } else {
-                let warning_note = format!("[ATTENTION: Envoi forcé malgré réservation {} au {}] ", c_num, c_pickup);
-                item_notes = format!("{}{}", warning_note, item_notes);
+            if prv_exists.is_none() {
+                return Err(AppError::Validation(format!("Prestataire de pressing introuvable ou inactif : {}", prv_id)));
             }
         }
 
-        // 4. Numérotation et enregistrement
-        let (num_envoi, _) = next_pressing_number_for_date(&mut *tx.conn, &today).await?;
-        let envoi_id = format!("prs-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+        let today = today_local();
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut ids = Vec::new();
 
-        sqlx::query(
-            "INSERT INTO pressing_envois (
-                id, numero_envoi, variante_id, prestataire_id, location_id,
-                type_traitement, motif, cout_centimes, statut_paiement_prestataire,
-                date_paiement_prestataire, date_envoi, date_retour_prevue,
-                date_retour_effective, statut, notes, utilisateur_id,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'a_payer', NULL, ?, ?, NULL, 'envoye', ?, ?, ?, ?)"
-        )
-        .bind(&envoi_id)
-        .bind(&num_envoi)
-        .bind(var_id)
-        .bind(&dto.prestataire_id)
-        .bind(&dto.location_id)
-        .bind(&dto.type_traitement)
-        .bind(&dto.motif)
-        .bind(dto.cout_centimes.unwrap_or(0))
-        .bind(&today)
-        .bind(&dto.date_retour_prevue)
-        .bind(&item_notes)
-        .bind(&user_id)
-        .bind(&now)
-        .bind(&now)
-        .execute(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?;
-
-        // 5. Bascule du statut physique de la variante en au_pressing
-        sqlx::query("UPDATE variantes_stock SET statut = 'au_pressing', updated_at = ? WHERE id = ?")
-            .bind(&now)
+        for var_id in &dto.variante_ids {
+            // 1. Récupérer variante et article
+            let var_row = sqlx::query(
+                "SELECT v.id, v.article_id, v.taille, a.nom as article_nom, a.reference as article_ref
+                 FROM variantes_stock v
+                 JOIN articles a ON v.article_id = a.id
+                 WHERE v.id = ?"
+            )
             .bind(var_id)
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?
+            .ok_or_else(|| AppError::Validation(format!("Variante introuvable : {}", var_id)))?;
+
+            let art_nom: String = var_row.get("article_nom");
+            let _art_ref: String = var_row.get("article_ref");
+
+            // 2. Refus si la variante est actuellement en cours de location
+            let active_rental = sqlx::query(
+                "SELECT l.numero_location
+                 FROM lignes_location ll
+                 JOIN locations l ON ll.location_id = l.id
+                 WHERE ll.variante_id = ?
+                   AND ll.est_rendu = 0
+                   AND l.statut IN ('en_cours', 'en_retard', 'litige')
+                 LIMIT 1"
+            )
+            .bind(var_id)
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+            if let Some(r) = active_rental {
+                let num_loc: String = r.get("numero_location");
+                return Err(AppError::Validation(format!(
+                    "La pièce '{}' est actuellement sortie sur le contrat {} (non rendue). Envoi pressing impossible.",
+                    art_nom, num_loc
+                )));
+            }
+
+            // 3. Vérification des réservations futures en conflit
+            let future_conflict = sqlx::query(
+                "SELECT l.numero_location, l.date_retrait_prevue
+                 FROM lignes_location ll
+                 JOIN locations l ON ll.location_id = l.id
+                 WHERE ll.variante_id = ?
+                   AND ll.est_rendu = 0
+                   AND l.statut = 'reserve'
+                   AND l.date_retrait_prevue < ?
+                 ORDER BY l.date_retrait_prevue ASC
+                 LIMIT 1"
+            )
+            .bind(var_id)
+            .bind(&dto.date_retour_prevue)
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+            let mut item_notes = dto.notes.clone().unwrap_or_default();
+            if let Some(fc) = future_conflict {
+                let c_num: String = fc.get("numero_location");
+                let c_pickup: String = fc.get("date_retrait_prevue");
+
+                if !dto.force {
+                    return Err(AppError::Validation(format!(
+                        "Conflit de date pour '{}' : réservée pour le contrat {} dès le {}, avant la date de retour prévue du pressing ({}). Confirmez avec 'force' pour déroger.",
+                        art_nom, c_num, c_pickup, dto.date_retour_prevue
+                    )));
+                } else {
+                    let warning_note = format!("[ATTENTION: Envoi forcé malgré réservation {} au {}] ", c_num, c_pickup);
+                    item_notes = format!("{}{}", warning_note, item_notes);
+                }
+            }
+
+            // 4. Numérotation et enregistrement
+            let (num_envoi, _) = next_pressing_number_for_date(&mut *tx.conn, &today).await?;
+            let envoi_id = format!("prs-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+
+            sqlx::query(
+                "INSERT INTO pressing_envois (
+                    id, numero_envoi, variante_id, prestataire_id, location_id,
+                    type_traitement, motif, cout_centimes, statut_paiement_prestataire,
+                    date_paiement_prestataire, date_envoi, date_retour_prevue,
+                    date_retour_effective, statut, notes, utilisateur_id,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'a_payer', NULL, ?, ?, NULL, 'envoye', ?, ?, ?, ?)"
+            )
+            .bind(&envoi_id)
+            .bind(&num_envoi)
+            .bind(var_id)
+            .bind(&dto.prestataire_id)
+            .bind(&dto.location_id)
+            .bind(&dto.type_traitement)
+            .bind(&dto.motif)
+            .bind(dto.cout_centimes.unwrap_or(0))
+            .bind(&today)
+            .bind(&dto.date_retour_prevue)
+            .bind(&item_notes)
+            .bind(&user_id)
+            .bind(&now)
+            .bind(&now)
             .execute(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?;
 
-        created_ids.push(envoi_id);
-    }
+            // 5. Bascule du statut physique de la variante en au_pressing
+            sqlx::query("UPDATE variantes_stock SET statut = 'au_pressing', updated_at = ? WHERE id = ?")
+                .bind(&now)
+                .bind(var_id)
+                .execute(&mut *tx.conn)
+                .await
+                .map_err(map_sqlite_err)?;
 
-    tx.commit().await?;
+            ids.push(envoi_id);
+        }
+
+        Ok(ids)
+    }.await {
+        Ok(ids) => {
+            tx.commit().await?;
+            ids
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+    };
 
     // Chargement des DTOs complets
     let mut dispatches = Vec::new();
@@ -519,59 +560,69 @@ pub async fn execute_receive_pressing_dispatch(
 ) -> Result<PressingDispatchDto, AppError> {
     let mut tx = ImmediateTx::begin(pool).await?;
 
-    let row = sqlx::query("SELECT id, variante_id, statut, notes FROM pressing_envois WHERE id = ?")
-        .bind(envoi_id)
-        .fetch_optional(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?
-        .ok_or_else(|| AppError::NotFound(format!("Envoi pressing introuvable : {}", envoi_id)))?;
+    match async {
+        let row = sqlx::query("SELECT id, variante_id, statut, notes FROM pressing_envois WHERE id = ?")
+            .bind(envoi_id)
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?
+            .ok_or_else(|| AppError::NotFound(format!("Envoi pressing introuvable : {}", envoi_id)))?;
 
-    let cur_statut: String = row.get("statut");
-    let var_id: String = row.get("variante_id");
-    let cur_notes: Option<String> = row.get("notes");
+        let cur_statut: String = row.get("statut");
+        let var_id: String = row.get("variante_id");
+        let cur_notes: Option<String> = row.get("notes");
 
-    if matches!(cur_statut.as_str(), "recu" | "annule") {
-        return Err(AppError::Validation(format!(
-            "Impossible de réceptionner un envoi au statut '{}'.",
-            cur_statut
-        )));
-    }
+        if matches!(cur_statut.as_str(), "recu" | "annule") {
+            return Err(AppError::Validation(format!(
+                "Impossible de réceptionner un envoi au statut '{}'.",
+                cur_statut
+            )));
+        }
 
-    let today = today_local();
-    let ret_eff = date_retour_effective.unwrap_or(today);
-    let now = chrono::Utc::now().to_rfc3339();
+        let today = today_local();
+        let ret_eff = date_retour_effective.unwrap_or(today);
+        let now = chrono::Utc::now().to_rfc3339();
 
-    let merged_notes = match (cur_notes, notes) {
-        (Some(c), Some(n)) if !n.trim().is_empty() => Some(format!("{} | Réception: {}", c, n)),
-        (None, Some(n)) if !n.trim().is_empty() => Some(format!("Réception: {}", n)),
-        (c, _) => c,
-    };
+        let merged_notes = match (cur_notes, notes) {
+            (Some(c), Some(n)) if !n.trim().is_empty() => Some(format!("{} | Réception: {}", c, n)),
+            (None, Some(n)) if !n.trim().is_empty() => Some(format!("Réception: {}", n)),
+            (c, _) => c,
+        };
 
-    sqlx::query(
-        "UPDATE pressing_envois SET
-            statut = 'recu', date_retour_effective = ?, notes = ?, updated_at = ?
-         WHERE id = ?"
-    )
-    .bind(&ret_eff)
-    .bind(&merged_notes)
-    .bind(&now)
-    .bind(envoi_id)
-    .execute(&mut *tx.conn)
-    .await
-    .map_err(map_sqlite_err)?;
-
-    // Libère la variante du statut physique au_pressing vers disponible
-    sqlx::query("UPDATE variantes_stock SET statut = 'disponible', updated_at = ? WHERE id = ?")
+        sqlx::query(
+            "UPDATE pressing_envois SET
+                statut = 'recu', date_retour_effective = ?, notes = ?, updated_at = ?
+             WHERE id = ?"
+        )
+        .bind(&ret_eff)
+        .bind(&merged_notes)
         .bind(&now)
-        .bind(&var_id)
+        .bind(envoi_id)
         .execute(&mut *tx.conn)
         .await
         .map_err(map_sqlite_err)?;
 
-    // Recalcule le statut réel (disponible ou reserve si contrat futur)
-    recompute_variant_status(&mut *tx.conn, &var_id).await?;
+        // Libère la variante du statut physique au_pressing vers disponible
+        sqlx::query("UPDATE variantes_stock SET statut = 'disponible', updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(&var_id)
+            .execute(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
 
-    tx.commit().await?;
+        // Recalcule le statut réel (disponible ou reserve si contrat futur)
+        recompute_variant_status(&mut *tx.conn, &var_id).await?;
+
+        Ok(())
+    }.await {
+        Ok(_) => {
+            tx.commit().await?;
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+    }
 
     fetch_pressing_dispatch_dto(pool, envoi_id)
         .await?
@@ -585,42 +636,52 @@ pub async fn execute_mark_pressing_problem(
 ) -> Result<PressingDispatchDto, AppError> {
     let mut tx = ImmediateTx::begin(pool).await?;
 
-    let row = sqlx::query("SELECT id, variante_id, notes FROM pressing_envois WHERE id = ?")
-        .bind(envoi_id)
-        .fetch_optional(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?
-        .ok_or_else(|| AppError::NotFound(format!("Envoi pressing introuvable : {}", envoi_id)))?;
+    match async {
+        let row = sqlx::query("SELECT id, variante_id, notes FROM pressing_envois WHERE id = ?")
+            .bind(envoi_id)
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?
+            .ok_or_else(|| AppError::NotFound(format!("Envoi pressing introuvable : {}", envoi_id)))?;
 
-    let var_id: String = row.get("variante_id");
-    let cur_notes: Option<String> = row.get("notes");
-    let now = chrono::Utc::now().to_rfc3339();
+        let var_id: String = row.get("variante_id");
+        let cur_notes: Option<String> = row.get("notes");
+        let now = chrono::Utc::now().to_rfc3339();
 
-    let merged_notes = match (cur_notes, notes) {
-        (Some(c), Some(n)) if !n.trim().is_empty() => Some(format!("{} | PROBLÈME: {}", c, n)),
-        (None, Some(n)) if !n.trim().is_empty() => Some(format!("PROBLÈME: {}", n)),
-        (c, _) => c,
-    };
+        let merged_notes = match (cur_notes, notes) {
+            (Some(c), Some(n)) if !n.trim().is_empty() => Some(format!("{} | PROBLÈME: {}", c, n)),
+            (None, Some(n)) if !n.trim().is_empty() => Some(format!("PROBLÈME: {}", n)),
+            (c, _) => c,
+        };
 
-    sqlx::query(
-        "UPDATE pressing_envois SET statut = 'probleme', notes = ?, updated_at = ? WHERE id = ?"
-    )
-    .bind(&merged_notes)
-    .bind(&now)
-    .bind(envoi_id)
-    .execute(&mut *tx.conn)
-    .await
-    .map_err(map_sqlite_err)?;
-
-    // Ne pas libérer la variante : statut physique devient indisponible
-    sqlx::query("UPDATE variantes_stock SET statut = 'indisponible', updated_at = ? WHERE id = ?")
+        sqlx::query(
+            "UPDATE pressing_envois SET statut = 'probleme', notes = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(&merged_notes)
         .bind(&now)
-        .bind(&var_id)
+        .bind(envoi_id)
         .execute(&mut *tx.conn)
         .await
         .map_err(map_sqlite_err)?;
 
-    tx.commit().await?;
+        // Ne pas libérer la variante : statut physique devient indisponible
+        sqlx::query("UPDATE variantes_stock SET statut = 'indisponible', updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(&var_id)
+            .execute(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+        Ok(())
+    }.await {
+        Ok(_) => {
+            tx.commit().await?;
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+    }
 
     fetch_pressing_dispatch_dto(pool, envoi_id)
         .await?
@@ -633,42 +694,52 @@ pub async fn execute_cancel_pressing_dispatch(
 ) -> Result<PressingDispatchDto, AppError> {
     let mut tx = ImmediateTx::begin(pool).await?;
 
-    let row = sqlx::query("SELECT id, variante_id, statut FROM pressing_envois WHERE id = ?")
-        .bind(envoi_id)
-        .fetch_optional(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?
-        .ok_or_else(|| AppError::NotFound(format!("Envoi pressing introuvable : {}", envoi_id)))?;
+    match async {
+        let row = sqlx::query("SELECT id, variante_id, statut FROM pressing_envois WHERE id = ?")
+            .bind(envoi_id)
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?
+            .ok_or_else(|| AppError::NotFound(format!("Envoi pressing introuvable : {}", envoi_id)))?;
 
-    let cur_statut: String = row.get("statut");
-    let var_id: String = row.get("variante_id");
+        let cur_statut: String = row.get("statut");
+        let var_id: String = row.get("variante_id");
 
-    if cur_statut != "envoye" {
-        return Err(AppError::Validation(format!(
-            "Seul un envoi au statut 'envoye' peut être annulé (statut actuel : '{}').",
-            cur_statut
-        )));
+        if cur_statut != "envoye" {
+            return Err(AppError::Validation(format!(
+                "Seul un envoi au statut 'envoye' peut être annulé (statut actuel : '{}').",
+                cur_statut
+            )));
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query("UPDATE pressing_envois SET statut = 'annule', updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(envoi_id)
+            .execute(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+        // Libère la variante du statut au_pressing et recalcul
+        sqlx::query("UPDATE variantes_stock SET statut = 'disponible', updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(&var_id)
+            .execute(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+        recompute_variant_status(&mut *tx.conn, &var_id).await?;
+
+        Ok(())
+    }.await {
+        Ok(_) => {
+            tx.commit().await?;
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
     }
-
-    let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query("UPDATE pressing_envois SET statut = 'annule', updated_at = ? WHERE id = ?")
-        .bind(&now)
-        .bind(envoi_id)
-        .execute(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?;
-
-    // Libère la variante du statut au_pressing et recalcul
-    sqlx::query("UPDATE variantes_stock SET statut = 'disponible', updated_at = ? WHERE id = ?")
-        .bind(&now)
-        .bind(&var_id)
-        .execute(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?;
-
-    recompute_variant_status(&mut *tx.conn, &var_id).await?;
-
-    tx.commit().await?;
 
     fetch_pressing_dispatch_dto(pool, envoi_id)
         .await?
@@ -682,28 +753,38 @@ pub async fn execute_pay_pressing_provider(
 ) -> Result<PressingDispatchDto, AppError> {
     let mut tx = ImmediateTx::begin(pool).await?;
 
-    let today = today_local();
-    let pay_date = date_paiement.unwrap_or(today);
-    let now = chrono::Utc::now().to_rfc3339();
+    match async {
+        let today = today_local();
+        let pay_date = date_paiement.unwrap_or(today);
+        let now = chrono::Utc::now().to_rfc3339();
 
-    let rows_affected = sqlx::query(
-        "UPDATE pressing_envois SET
-            statut_paiement_prestataire = 'paye', date_paiement_prestataire = ?, updated_at = ?
-         WHERE id = ?"
-    )
-    .bind(&pay_date)
-    .bind(&now)
-    .bind(envoi_id)
-    .execute(&mut *tx.conn)
-    .await
-    .map_err(map_sqlite_err)?
-    .rows_affected();
+        let rows_affected = sqlx::query(
+            "UPDATE pressing_envois SET
+                statut_paiement_prestataire = 'paye', date_paiement_prestataire = ?, updated_at = ?
+             WHERE id = ?"
+        )
+        .bind(&pay_date)
+        .bind(&now)
+        .bind(envoi_id)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?
+        .rows_affected();
 
-    if rows_affected == 0 {
-        return Err(AppError::NotFound(format!("Envoi pressing introuvable : {}", envoi_id)));
+        if rows_affected == 0 {
+            return Err(AppError::NotFound(format!("Envoi pressing introuvable : {}", envoi_id)));
+        }
+
+        Ok(())
+    }.await {
+        Ok(_) => {
+            tx.commit().await?;
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
     }
-
-    tx.commit().await?;
 
     fetch_pressing_dispatch_dto(pool, envoi_id)
         .await?
