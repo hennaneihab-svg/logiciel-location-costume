@@ -10,6 +10,7 @@ pub const MIGRATION_0004: &str = include_str!("../../migrations/0004_article_pho
 pub const MIGRATION_0005: &str = include_str!("../../migrations/0005_rental_caisse_sqlite_tables.sql");
 pub const MIGRATION_0006: &str = include_str!("../../migrations/0006_fix_lignes_location_fk_restrict.sql");
 pub const MIGRATION_0007: &str = include_str!("../../migrations/0007_annual_numbering_counters.sql");
+pub const MIGRATION_0008: &str = include_str!("../../migrations/0008_pressing.sql");
 
 pub struct DbState {
     pub pool: SqlitePool,
@@ -301,6 +302,67 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
 
                 let now = chrono::Utc::now().to_rfc3339();
                 sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (7, '0007_annual_numbering_counters', ?)")
+                    .bind(now)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK;").execute(&mut *conn).await;
+                return Err(e);
+            }
+        }
+    }
+
+    // Migration 0008 (Module Pressing)
+    let row8: Option<(i64,)> = sqlx::query_as("SELECT version FROM _migrations WHERE version = 8")
+        .fetch_optional(pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+    if row8.is_none() {
+        let mut conn = pool.acquire().await.map_err(AppError::DatabaseError)?;
+        sqlx::query("BEGIN IMMEDIATE;")
+            .execute(&mut *conn)
+            .await
+            .map_err(AppError::DatabaseError)?;
+
+        let migration_res: Result<(), AppError> = async {
+            for statement in MIGRATION_0008.split(';') {
+                let stmt = statement.trim();
+                if !stmt.is_empty() {
+                    sqlx::query(stmt)
+                        .execute(&mut *conn)
+                        .await
+                        .map_err(AppError::DatabaseError)?;
+                }
+            }
+
+            // Vérification de l'intégrité référentielle
+            let fk_violations: Vec<(String, Option<i64>, String, i64)> =
+                sqlx::query_as("PRAGMA foreign_key_check;")
+                    .fetch_all(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+
+            if !fk_violations.is_empty() {
+                return Err(AppError::DatabaseError(sqlx::Error::Configuration(
+                    format!("Violations de clés étrangères détectées après migration 0008 : {:?}", fk_violations).into()
+                )));
+            }
+
+            Ok(())
+        }.await;
+
+        match migration_res {
+            Ok(()) => {
+                sqlx::query("COMMIT;")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+
+                let now = chrono::Utc::now().to_rfc3339();
+                sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (8, '0008_pressing', ?)")
                     .bind(now)
                     .execute(&mut *conn)
                     .await
