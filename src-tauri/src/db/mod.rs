@@ -9,6 +9,7 @@ pub const MIGRATION_0003: &str = include_str!("../../migrations/0003_articles_mo
 pub const MIGRATION_0004: &str = include_str!("../../migrations/0004_article_photos.sql");
 pub const MIGRATION_0005: &str = include_str!("../../migrations/0005_rental_caisse_sqlite_tables.sql");
 pub const MIGRATION_0006: &str = include_str!("../../migrations/0006_fix_lignes_location_fk_restrict.sql");
+pub const MIGRATION_0007: &str = include_str!("../../migrations/0007_annual_numbering_counters.sql");
 
 pub struct DbState {
     pub pool: SqlitePool,
@@ -260,6 +261,53 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
             Err(e) => {
                 let _ = sqlx::query("ROLLBACK;").execute(&mut *conn).await;
                 let _ = sqlx::query("PRAGMA foreign_keys = ON;").execute(&mut *conn).await;
+                return Err(e);
+            }
+        }
+    }
+
+    // Migration 0007 (Compteurs annuels dans app_meta)
+    let row7: Option<(i64,)> = sqlx::query_as("SELECT version FROM _migrations WHERE version = 7")
+        .fetch_optional(pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+    if row7.is_none() {
+        let mut conn = pool.acquire().await.map_err(AppError::DatabaseError)?;
+        sqlx::query("BEGIN IMMEDIATE;")
+            .execute(&mut *conn)
+            .await
+            .map_err(AppError::DatabaseError)?;
+
+        let migration_res: Result<(), AppError> = async {
+            for statement in MIGRATION_0007.split(';') {
+                let stmt = statement.trim();
+                if !stmt.is_empty() {
+                    sqlx::query(stmt)
+                        .execute(&mut *conn)
+                        .await
+                        .map_err(AppError::DatabaseError)?;
+                }
+            }
+            Ok(())
+        }.await;
+
+        match migration_res {
+            Ok(()) => {
+                sqlx::query("COMMIT;")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+
+                let now = chrono::Utc::now().to_rfc3339();
+                sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (7, '0007_annual_numbering_counters', ?)")
+                    .bind(now)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK;").execute(&mut *conn).await;
                 return Err(e);
             }
         }

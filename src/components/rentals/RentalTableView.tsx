@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Search,
   FileText,
@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Calendar,
   MessageCircle,
+  CreditCard,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { useRentalStore } from "@/store/rentalStore";
@@ -16,8 +17,10 @@ import { toast } from "sonner";
 import { ouvrirWhatsApp } from "@/lib/whatsapp";
 import { buildConfirmationReservationMessage } from "@/lib/whatsappTemplates";
 import type { RentalContractStatus, RentalContract } from "@/types/rental";
+import { RentalPaymentModal } from "@/components/rentals/RentalPaymentModal";
 
 export const RentalTableView: React.FC = () => {
+  const [paymentModalContract, setPaymentModalContract] = useState<RentalContract | null>(null);
   const {
     contracts,
     activeFilter,
@@ -306,6 +309,18 @@ export const RentalTableView: React.FC = () => {
                         </button>
                       )}
 
+                      {contract.remaining_amount_cents > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setPaymentModalContract(contract)}
+                          title="Encaisser le solde du contrat"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-600 hover:text-white text-xs font-semibold border border-emerald-500/30 transition-all shadow-xs"
+                        >
+                          <CreditCard className="w-3 h-3" />
+                          <span>Régler</span>
+                        </button>
+                      )}
+
                       <button
                         type="button"
                         onClick={() => setPdfPreviewModalOpen(true, contract)}
@@ -323,6 +338,13 @@ export const RentalTableView: React.FC = () => {
           </tbody>
         </table>
       </div>
+
+      {paymentModalContract && (
+        <RentalPaymentModal
+          contract={paymentModalContract}
+          onClose={() => setPaymentModalContract(null)}
+        />
+      )}
     </div>
   );
 };

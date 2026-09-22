@@ -59,6 +59,13 @@ interface RentalStoreState {
   ) => Promise<RentalContract>;
 
   cancelContract: (contractId: string) => Promise<RentalContract>;
+  recordContractPayment: (
+    locationId: string,
+    montantCentimes: number,
+    typePaiement: "solde" | "caution" | "frais_retard" | "degradation" | "remboursement",
+    moyenPaiement: string,
+    notes?: string
+  ) => Promise<void>;
 }
 
 // 15 contrats initiaux complets et réalistes
@@ -742,5 +749,63 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
       ),
     }));
     return get().contracts.find((c) => c.id === contractId)!;
+  },
+
+  recordContractPayment: async (
+    locationId: string,
+    montantCentimes: number,
+    typePaiement: "solde" | "caution" | "frais_retard" | "degradation" | "remboursement",
+    moyenPaiement: string,
+    notes?: string
+  ) => {
+    const currentUser = useAuthStore.getState().currentUser;
+    if (!currentUser) {
+      throw new Error("Opération impossible : aucun utilisateur n'est actuellement authentifié.");
+    }
+
+    if (isTauri()) {
+      set({ isLoading: true });
+      try {
+        const dto = {
+          location_id: locationId,
+          vente_id: null,
+          utilisateur_id: currentUser.id,
+          montant_centimes: montantCentimes,
+          type_paiement: typePaiement,
+          moyen_paiement: moyenPaiement,
+          reference_transaction: null,
+          notes: notes || null,
+        };
+        await invokeCommand("record_payment", { dto });
+        await get().loadContracts();
+      } finally {
+        set({ isLoading: false });
+      }
+      return;
+    }
+
+    // Mode hors Tauri (tests / mémoire)
+    set((state) => ({
+      contracts: state.contracts.map((c) => {
+        if (c.id !== locationId) return c;
+        if (typePaiement === "caution") {
+          return { ...c, deposit_status: "encaissee" as const };
+        }
+        if (typePaiement === "remboursement") {
+          const newPaid = Math.max(0, c.paid_amount_cents - Math.abs(montantCentimes));
+          return {
+            ...c,
+            paid_amount_cents: newPaid,
+            remaining_amount_cents: Math.max(0, c.total_amount_cents - newPaid),
+          };
+        }
+        const newPaid = c.paid_amount_cents + montantCentimes;
+        return {
+          ...c,
+          paid_amount_cents: newPaid,
+          remaining_amount_cents: Math.max(0, c.total_amount_cents - newPaid),
+        };
+      }),
+    }));
   },
 }));

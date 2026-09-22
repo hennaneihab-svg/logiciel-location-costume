@@ -306,8 +306,6 @@ pub async fn recompute_variant_status(
         return Ok(current_statut);
     }
 
-    let today = today_local();
-
     // Recherche de contrats actifs impliquant cette variante non encore rendue
     let active_contracts = sqlx::query(
         "SELECT l.statut, l.date_retrait_prevue
@@ -326,12 +324,11 @@ pub async fn recompute_variant_status(
     let mut target_status = "disponible";
     for ac in active_contracts {
         let l_statut: String = ac.get("statut");
-        let date_retrait: String = ac.get("date_retrait_prevue");
 
-        if l_statut == "en_cours" || l_statut == "en_retard" || l_statut == "litige" || date_retrait <= today {
+        if matches!(l_statut.as_str(), "en_cours" | "en_retard" | "litige") {
             target_status = "en_location";
             break;
-        } else if target_status != "en_location" {
+        } else if l_statut == "reserve" && target_status != "en_location" {
             target_status = "reserve";
         }
     }
@@ -479,7 +476,7 @@ pub async fn fetch_rental_dto_by_id(pool: &sqlx::SqlitePool, id: &str) -> Result
 
     // 3. Récupérer les paiements associés
     let pay_rows = sqlx::query(
-        "SELECT montant_centimes, moyen_paiement FROM paiements WHERE location_id = ? ORDER BY date_paiement ASC"
+        "SELECT montant_centimes, moyen_paiement, type_paiement FROM paiements WHERE location_id = ? ORDER BY date_paiement ASC"
     )
     .bind(&location_id)
     .fetch_all(pool)
@@ -491,8 +488,11 @@ pub async fn fetch_rental_dto_by_id(pool: &sqlx::SqlitePool, id: &str) -> Result
     for pr in pay_rows {
         let m: i64 = pr.get("montant_centimes");
         let mp: String = pr.get("moyen_paiement");
-        paid_amount_cents += m;
-        payment_method = mp;
+        let tp: String = pr.get("type_paiement");
+        if tp != "caution" {
+            paid_amount_cents += m;
+            payment_method = mp;
+        }
     }
 
     let remaining_amount_cents = (total_amount_cents - paid_amount_cents).max(0);
@@ -559,6 +559,90 @@ pub async fn list_rentals(state: State<'_, DbState>) -> Result<Vec<RentalContrac
 #[command]
 pub async fn get_rental(id: String, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
     fetch_rental_dto_by_id(&state.pool, &id).await
+}
+
+pub async fn next_rental_number_for_date(
+    conn: &mut sqlx::SqliteConnection,
+    date_str: &str,
+) -> Result<(String, i64), AppError> {
+    let year = if date_str.len() >= 4 {
+        &date_str[0..4]
+    } else {
+        "2026"
+    };
+
+    let key = format!("dernier_numero_location_{}", year);
+    let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO app_meta (cle, valeur, updated_at) VALUES (?, '0', ?)"
+    )
+    .bind(&key)
+    .bind(&now)
+    .execute(&mut *conn)
+    .await
+    .map_err(map_sqlite_err)?;
+
+    sqlx::query(
+        "UPDATE app_meta SET valeur = CAST(valeur AS INTEGER) + 1, updated_at = ? WHERE cle = ?"
+    )
+    .bind(&now)
+    .bind(&key)
+    .execute(&mut *conn)
+    .await
+    .map_err(map_sqlite_err)?;
+
+    let meta_row: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = ?")
+        .bind(&key)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+    let seq_num: i64 = meta_row.0.parse().unwrap_or(1);
+    let contract_number = format!("LOC-{}-{:04}", year, seq_num);
+    Ok((contract_number, seq_num))
+}
+
+pub async fn next_sale_number_for_date(
+    conn: &mut sqlx::SqliteConnection,
+    date_str: &str,
+) -> Result<(String, i64), AppError> {
+    let year = if date_str.len() >= 4 {
+        &date_str[0..4]
+    } else {
+        "2026"
+    };
+
+    let key = format!("dernier_numero_vente_{}", year);
+    let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO app_meta (cle, valeur, updated_at) VALUES (?, '0', ?)"
+    )
+    .bind(&key)
+    .bind(&now)
+    .execute(&mut *conn)
+    .await
+    .map_err(map_sqlite_err)?;
+
+    sqlx::query(
+        "UPDATE app_meta SET valeur = CAST(valeur AS INTEGER) + 1, updated_at = ? WHERE cle = ?"
+    )
+    .bind(&now)
+    .bind(&key)
+    .execute(&mut *conn)
+    .await
+    .map_err(map_sqlite_err)?;
+
+    let meta_row: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = ?")
+        .bind(&key)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+    let seq_num: i64 = meta_row.0.parse().unwrap_or(1);
+    let sale_number = format!("VTE-{}-{:04}", year, seq_num);
+    Ok((sale_number, seq_num))
 }
 
 pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalContractDto) -> Result<RentalContractDto, AppError> {
@@ -761,30 +845,7 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
         let deposit_amount_cents = dto.deposit_amount_cents.unwrap_or(default_deposit_cents);
         let paid_cents = dto.paid_amount_cents.unwrap_or(0);
 
-        sqlx::query(
-            "INSERT OR IGNORE INTO app_meta (cle, valeur, updated_at) VALUES ('dernier_numero_location', '15', ?)"
-        )
-        .bind(&now)
-        .execute(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?;
-
-        sqlx::query(
-            "UPDATE app_meta SET valeur = CAST(valeur AS INTEGER) + 1, updated_at = ? WHERE cle = 'dernier_numero_location'"
-        )
-        .bind(&now)
-        .execute(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?;
-
-        let meta_row: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'dernier_numero_location'")
-            .fetch_one(&mut *tx.conn)
-            .await
-            .map_err(map_sqlite_err)?;
-
-        let seq_num: i64 = meta_row.0.parse().unwrap_or(16);
-        let current_year = chrono::Utc::now().format("%Y").to_string();
-        let contract_number = format!("LOC-{}-{:04}", current_year, seq_num);
+        let (contract_number, _seq_num) = next_rental_number_for_date(&mut *tx.conn, &today_local()).await?;
         let location_id = format!("loc-{}", chrono::Utc::now().timestamp_millis());
         let pdf_path = format!("/bons/{}/BON-{}.pdf", chrono::Utc::now().format("%Y-%m"), contract_number);
         let deposit_status = if dto.deposit_method == "empreinte_cb" {
@@ -1463,30 +1524,7 @@ pub async fn execute_create_direct_sale(pool: &sqlx::SqlitePool, dto: CreateDire
             }
         }
 
-        sqlx::query(
-            "INSERT OR IGNORE INTO app_meta (cle, valeur, updated_at) VALUES ('dernier_numero_vente', '40', ?)"
-        )
-        .bind(&now)
-        .execute(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?;
-
-        sqlx::query(
-            "UPDATE app_meta SET valeur = CAST(valeur AS INTEGER) + 1, updated_at = ? WHERE cle = 'dernier_numero_vente'"
-        )
-        .bind(&now)
-        .execute(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?;
-
-        let meta_row: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'dernier_numero_vente'")
-            .fetch_one(&mut *tx.conn)
-            .await
-            .map_err(map_sqlite_err)?;
-
-        let seq_num: i64 = meta_row.0.parse().unwrap_or(41);
-        let current_year = chrono::Utc::now().format("%Y").to_string();
-        let sale_number = format!("VTE-{}-{:04}", current_year, seq_num);
+        let (sale_number, _seq_num) = next_sale_number_for_date(&mut *tx.conn, &today_local()).await?;
         let sale_id = format!("vte-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
 
         sqlx::query(
@@ -1849,16 +1887,87 @@ pub async fn get_active_cash_session(state: State<'_, DbState>) -> Result<Option
 }
 
 pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentDto) -> Result<Paiement, AppError> {
-    if dto.montant_centimes <= 0 {
+    let valid_types = [
+        "acompte",
+        "solde",
+        "caution",
+        "frais_retard",
+        "degradation",
+        "remboursement",
+        "vente_directe",
+    ];
+    if !valid_types.contains(&dto.type_paiement.as_str()) {
+        return Err(AppError::Validation(format!(
+            "Type de paiement invalide : '{}'. Types autorisés : acompte, solde, caution, frais_retard, degradation, remboursement, vente_directe.",
+            dto.type_paiement
+        )));
+    }
+
+    let is_refund = dto.type_paiement == "remboursement";
+    if is_refund {
+        if dto.montant_centimes == 0 {
+            return Err(AppError::Validation("Le montant d'un remboursement ne peut pas être nul.".to_string()));
+        }
+    } else if dto.montant_centimes <= 0 {
         return Err(AppError::Validation("Le montant du paiement doit être strictement positif.".to_string()));
     }
+
+    let stored_montant = if is_refund {
+        -dto.montant_centimes.abs()
+    } else {
+        dto.montant_centimes
+    };
 
     let mut tx = ImmediateTx::begin(pool).await?;
 
     let pay_id = match async {
+        let user_exists: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM utilisateurs WHERE id = ? AND est_actif = 1"
+        )
+        .bind(&dto.utilisateur_id)
+        .fetch_optional(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        if user_exists.is_none() {
+            return Err(AppError::Validation(format!("Utilisateur introuvable ou inactif : {}", dto.utilisateur_id)));
+        }
+
         let now = chrono::Utc::now().to_rfc3339();
         let pay_id = format!("pay-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
 
+        // 1. Mise à jour de la location si location_id est spécifié
+        if let Some(ref loc_id) = dto.location_id {
+            let loc_exists: Option<(String,)> = sqlx::query_as(
+                "SELECT id FROM locations WHERE id = ?"
+            )
+            .bind(loc_id)
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?;
+
+            if loc_exists.is_none() {
+                return Err(AppError::NotFound(format!("Contrat de location introuvable : {}", loc_id)));
+            }
+
+            if dto.type_paiement == "caution" {
+                sqlx::query("UPDATE locations SET statut_caution = 'encaissee', updated_at = ? WHERE id = ?")
+                    .bind(&now)
+                    .bind(loc_id)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+            } else {
+                sqlx::query("UPDATE locations SET updated_at = ? WHERE id = ?")
+                    .bind(&now)
+                    .bind(loc_id)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+            }
+        }
+
+        // 2. Insertion dans paiements (non modifiable, non supprimable)
         sqlx::query(
             "INSERT INTO paiements (
                 id, location_id, vente_id, utilisateur_id, montant_centimes,
@@ -1869,7 +1978,7 @@ pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentD
         .bind(&dto.location_id)
         .bind(&dto.vente_id)
         .bind(&dto.utilisateur_id)
-        .bind(dto.montant_centimes)
+        .bind(stored_montant)
         .bind(&dto.type_paiement)
         .bind(&dto.moyen_paiement)
         .bind(&dto.reference_transaction)
@@ -1879,6 +1988,7 @@ pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentD
         .await
         .map_err(map_sqlite_err)?;
 
+        // 3. Incrément / Décrément des totaux dans la session de caisse active si ouverte
         let active_session: Option<(String,)> = sqlx::query_as(
             "SELECT id FROM sessions_caisse WHERE statut = 'ouverte' ORDER BY date_session DESC LIMIT 1"
         )
@@ -1894,20 +2004,69 @@ pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentD
                 "virement" => "total_virement_centimes",
                 _ => "total_especes_centimes",
             };
-            let update_sql = format!(
-                "UPDATE sessions_caisse 
-                 SET total_locations_centimes = total_locations_centimes + ?,
-                     {} = {} + ?
-                 WHERE id = ?",
-                col_name, col_name
-            );
-            sqlx::query(&update_sql)
-                .bind(dto.montant_centimes)
-                .bind(dto.montant_centimes)
-                .bind(&ses_id)
-                .execute(&mut *tx.conn)
-                .await
-                .map_err(map_sqlite_err)?;
+
+            if is_refund {
+                let refund_abs = dto.montant_centimes.abs();
+                let update_sql = format!(
+                    "UPDATE sessions_caisse 
+                     SET total_locations_centimes = total_locations_centimes - ?,
+                         {} = {} - ?
+                     WHERE id = ?",
+                    col_name, col_name
+                );
+                sqlx::query(&update_sql)
+                    .bind(refund_abs)
+                    .bind(refund_abs)
+                    .bind(&ses_id)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+            } else if dto.type_paiement == "caution" {
+                let update_sql = format!(
+                    "UPDATE sessions_caisse 
+                     SET total_cautions_centimes = total_cautions_centimes + ?,
+                         {} = {} + ?
+                     WHERE id = ?",
+                    col_name, col_name
+                );
+                sqlx::query(&update_sql)
+                    .bind(dto.montant_centimes)
+                    .bind(dto.montant_centimes)
+                    .bind(&ses_id)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+            } else if dto.vente_id.is_some() {
+                let update_sql = format!(
+                    "UPDATE sessions_caisse 
+                     SET total_ventes_centimes = total_ventes_centimes + ?,
+                         {} = {} + ?
+                     WHERE id = ?",
+                    col_name, col_name
+                );
+                sqlx::query(&update_sql)
+                    .bind(dto.montant_centimes)
+                    .bind(dto.montant_centimes)
+                    .bind(&ses_id)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+            } else {
+                let update_sql = format!(
+                    "UPDATE sessions_caisse 
+                     SET total_locations_centimes = total_locations_centimes + ?,
+                         {} = {} + ?
+                     WHERE id = ?",
+                    col_name, col_name
+                );
+                sqlx::query(&update_sql)
+                    .bind(dto.montant_centimes)
+                    .bind(dto.montant_centimes)
+                    .bind(&ses_id)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+            }
         }
 
         Ok(pay_id)
@@ -1934,26 +2093,30 @@ pub async fn record_payment(dto: RecordPaymentDto, state: State<'_, DbState>) ->
     execute_record_payment(&state.pool, dto).await
 }
 
-#[command]
-pub async fn list_payments(location_id: Option<String>, vente_id: Option<String>, state: State<'_, DbState>) -> Result<Vec<Paiement>, AppError> {
+pub async fn execute_list_payments(pool: &sqlx::SqlitePool, location_id: Option<String>, vente_id: Option<String>) -> Result<Vec<Paiement>, AppError> {
     if let Some(loc_id) = location_id {
         sqlx::query_as::<_, Paiement>("SELECT * FROM paiements WHERE location_id = ? ORDER BY date_paiement ASC")
             .bind(loc_id)
-            .fetch_all(&state.pool)
+            .fetch_all(pool)
             .await
             .map_err(AppError::DatabaseError)
     } else if let Some(v_id) = vente_id {
         sqlx::query_as::<_, Paiement>("SELECT * FROM paiements WHERE vente_id = ? ORDER BY date_paiement ASC")
             .bind(v_id)
-            .fetch_all(&state.pool)
+            .fetch_all(pool)
             .await
             .map_err(AppError::DatabaseError)
     } else {
         sqlx::query_as::<_, Paiement>("SELECT * FROM paiements ORDER BY date_paiement DESC")
-            .fetch_all(&state.pool)
+            .fetch_all(pool)
             .await
             .map_err(AppError::DatabaseError)
     }
+}
+
+#[command]
+pub async fn list_payments(location_id: Option<String>, vente_id: Option<String>, state: State<'_, DbState>) -> Result<Vec<Paiement>, AppError> {
+    execute_list_payments(&state.pool, location_id, vente_id).await
 }
 
 // ----------------------------------------------------------------------------

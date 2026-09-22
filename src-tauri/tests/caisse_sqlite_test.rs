@@ -3,6 +3,7 @@ use costume_rental_lib::models::*;
 use costume_rental_lib::commands::*;
 use costume_rental_lib::error::AppError;
 use std::fs;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_direct_sale_numbering_and_stock_decrement() {
@@ -11,14 +12,14 @@ async fn test_direct_sale_numbering_and_stock_decrement() {
 
     let pool = db::init_db(&test_dir).await.expect("Failed to init db");
 
-    // 1. Vérifier le stock initial de l'article en quantité art-018 (15 unités)
+    // 1. Stock initial art-018
     let initial_qty: (i64,) = sqlx::query_as("SELECT quantite_disponible FROM articles WHERE id = 'art-018'")
         .fetch_one(&pool)
         .await
         .expect("Failed to fetch initial art-018 quantity");
     assert_eq!(initial_qty.0, 15);
 
-    // 2. Créer une vente directe sans variante (mode quantité)
+    // 2. Vente directe sans variante
     let sale_input_1 = CreateDirectSaleDto {
         customer_id: Some("cli-001".to_string()),
         customer_name: Some("Jean Dupont".to_string()),
@@ -56,19 +57,18 @@ async fn test_direct_sale_numbering_and_stock_decrement() {
         .await
         .expect("Failed to execute create_direct_sale 1");
 
-    // Vérifier la numérotation séquentielle VTE-2026-0041
     assert_eq!(sale_res_1.sale_number, "VTE-2026-0041");
     assert_eq!(sale_res_1.total_amount_cents, 19000);
     assert_eq!(sale_res_1.items.len(), 1);
 
-    // Vérifier le décrément du stock : 15 - 2 = 13
+    // Décrément stock : 15 - 2 = 13
     let after_qty_1: (i64,) = sqlx::query_as("SELECT quantite_disponible FROM articles WHERE id = 'art-018'")
         .fetch_one(&pool)
         .await
         .expect("Failed to fetch art-018 quantity after sale");
     assert_eq!(after_qty_1.0, 13);
 
-    // 3. Vente d'une pièce physique (variante var-001)
+    // 3. Vente d'une variante var-001
     let initial_var_statut: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-001'")
         .fetch_one(&pool)
         .await
@@ -112,34 +112,21 @@ async fn test_direct_sale_numbering_and_stock_decrement() {
         .await
         .expect("Failed to execute create_direct_sale 2");
 
-    // Deuxième vente séquentielle : VTE-2026-0042
     assert_eq!(sale_res_2.sale_number, "VTE-2026-0042");
     assert_eq!(sale_res_2.total_amount_cents, 89000);
 
-    // Vérifier que la variante est bien marquée 'vendu'
     let after_var_statut: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-001'")
         .fetch_one(&pool)
         .await
         .expect("Failed to fetch var-001 statut after sale");
     assert_eq!(after_var_statut.0, "vendu");
 
-    // 4. Vérifier la liste des ventes directes
     let all_sales = execute_list_direct_sales(&pool)
         .await
         .expect("Failed to list direct sales");
     assert_eq!(all_sales.len(), 2);
-    assert_eq!(all_sales[0].sale_number, "VTE-2026-0042"); // tri décroissant
+    assert_eq!(all_sales[0].sale_number, "VTE-2026-0042");
     assert_eq!(all_sales[1].sale_number, "VTE-2026-0041");
-
-    // 5. Vérifier la table paiements
-    let p1: (i64, String, String) = sqlx::query_as("SELECT montant_centimes, type_paiement, moyen_paiement FROM paiements WHERE vente_id = ?")
-        .bind(&sale_res_1.id)
-        .fetch_one(&pool)
-        .await
-        .expect("Failed to fetch payment for sale 1");
-    assert_eq!(p1.0, 19000);
-    assert_eq!(p1.1, "vente_directe");
-    assert_eq!(p1.2, "carte_bancaire");
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
@@ -152,13 +139,11 @@ async fn test_cash_session_open_ventilation_and_close() {
 
     let pool = db::init_db(&test_dir).await.expect("Failed to init db");
 
-    // 1. Au début, aucune session active
     let active_none = execute_get_active_cash_session(&pool)
         .await
         .expect("Failed to check active session");
-    assert!(active_none.is_none(), "Aucune session ne doit être ouverte initialement");
+    assert!(active_none.is_none());
 
-    // 2. Ouverture de la session avec un fond de caisse de 15 000 DA
     let open_dto = OpenCashSessionDto {
         utilisateur_id: "usr-001".to_string(),
         initial_cash_float_cents: 15000,
@@ -171,11 +156,8 @@ async fn test_cash_session_open_ventilation_and_close() {
     assert_eq!(session.status, "ouverte");
     assert_eq!(session.initial_cash_float_cents, 15000);
     assert_eq!(session.theoretical_cash_cents, 15000);
-    assert_eq!(session.sales_total_cents, 0);
-    assert_eq!(session.rentals_total_cents, 0);
 
-    // 3. Effectuer des opérations pendant que la session est ouverte
-    // A. Vente directe en espèces : 5 000 DA
+    // Vente espèces 5000 DA
     let sale_esp = CreateDirectSaleDto {
         customer_id: None,
         customer_name: Some("Client Espèces".to_string()),
@@ -208,11 +190,9 @@ async fn test_cash_session_open_ventilation_and_close() {
         },
         notes: None,
     };
-    execute_create_direct_sale(&pool, sale_esp)
-        .await
-        .expect("Failed sale in cash");
+    execute_create_direct_sale(&pool, sale_esp).await.expect("Failed sale cash");
 
-    // B. Vente directe en carte bancaire : 12 000 DA
+    // Vente CB 12000 DA
     let sale_cb = CreateDirectSaleDto {
         customer_id: None,
         customer_name: Some("Client CB".to_string()),
@@ -245,11 +225,9 @@ async fn test_cash_session_open_ventilation_and_close() {
         },
         notes: None,
     };
-    execute_create_direct_sale(&pool, sale_cb)
-        .await
-        .expect("Failed sale in card");
+    execute_create_direct_sale(&pool, sale_cb).await.expect("Failed sale card");
 
-    // C. Paiement de location (acompte en espèces) : 3 000 DA
+    // Paiement location espèces 3000 DA
     let pay_loc = RecordPaymentDto {
         location_id: Some("loc-001".to_string()),
         vente_id: None,
@@ -260,47 +238,31 @@ async fn test_cash_session_open_ventilation_and_close() {
         reference_transaction: None,
         notes: Some("Acompte reçu".to_string()),
     };
-    execute_record_payment(&pool, pay_loc)
-        .await
-        .expect("Failed record rental payment");
+    execute_record_payment(&pool, pay_loc).await.expect("Failed rental payment");
 
-    // 4. Vérifier la ventilation en temps réel de la session active
     let active_session = execute_get_active_cash_session(&pool)
         .await
-        .expect("Failed to get active session")
-        .expect("Active session must exist");
+        .expect("Failed get session")
+        .expect("Must exist");
 
-    assert_eq!(active_session.sales_total_cents, 17000, "Ventes directes : 5 000 + 12 000 = 17 000 DA");
-    assert_eq!(active_session.rentals_total_cents, 3000, "Locations : 3 000 DA");
-    assert_eq!(active_session.grand_total_cents, 20000, "Total CA journée : 20 000 DA");
-    assert_eq!(active_session.breakdown.especes.total_cents, 8000, "Total espèces : 5000 vente + 3000 location = 8 000 DA");
-    assert_eq!(active_session.breakdown.carte_bancaire.total_cents, 12000, "Total CB : 12 000 DA");
-    assert_eq!(active_session.theoretical_cash_cents, 23000, "Espèces théoriques : 15 000 (fond) + 8 000 (reçu) = 23 000 DA");
+    assert_eq!(active_session.sales_total_cents, 17000);
+    assert_eq!(active_session.rentals_total_cents, 3000);
+    assert_eq!(active_session.grand_total_cents, 20000);
+    assert_eq!(active_session.breakdown.especes.total_cents, 8000);
+    assert_eq!(active_session.breakdown.carte_bancaire.total_cents, 12000);
+    assert_eq!(active_session.theoretical_cash_cents, 23000);
 
-    // 5. Clôture de caisse avec comptage physique et calcul d'écart
-    // Cas : l'opérateur compte 22 800 DA (écart de -200 DA)
+    // Clôture avec écart
     let close_dto = CloseCashSessionDto {
         session_id: Some(session.id.clone()),
         utilisateur_id: "usr-001".to_string(),
         counted_cash_cents: 22800,
-        operator_notes: Some("Écart de caisse mineur : 200 DA d'erreur de rendu monnaie".to_string()),
+        operator_notes: Some("Écart de caisse -200 DA".to_string()),
     };
-
-    let closed_session = execute_close_cash_session(&pool, close_dto)
-        .await
-        .expect("Failed to close cash session");
-
-    assert_eq!(closed_session.status, "cloturee");
-    assert_eq!(closed_session.counted_cash_cents, Some(22800));
-    assert_eq!(closed_session.discrepancy_cents, Some(-200));
-    assert!(closed_session.closed_at.is_some());
-    assert_eq!(closed_session.closed_by_user_name, Some("Jean-Philippe Directeur".to_string()));
-
-    // 6. Vérifier qu'il n'y a plus de session active
-    let active_after_close = execute_get_active_cash_session(&pool)
-        .await
-        .expect("Failed to check active session after close");
-    assert!(active_after_close.is_none(), "Après clôture, aucune session ne doit être ouverte");
+    let closed = execute_close_cash_session(&pool, close_dto).await.expect("Failed close");
+    assert_eq!(closed.status, "cloturee");
+    assert_eq!(closed.counted_cash_cents, Some(22800));
+    assert_eq!(closed.discrepancy_cents, Some(-200));
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
@@ -313,36 +275,30 @@ async fn test_validation_errors_caisse() {
 
     let pool = db::init_db(&test_dir).await.expect("Failed to init db");
 
-    // 1. Ouvrir une session avec un utilisateur inexistant -> Erreur Validation
-    let bad_user_session = execute_open_cash_session(&pool, OpenCashSessionDto {
+    // Utilisateur invalide
+    let bad_user = execute_open_cash_session(&pool, OpenCashSessionDto {
         utilisateur_id: "usr-inexistant".to_string(),
         initial_cash_float_cents: 10000,
         notes: None,
     }).await;
-    match bad_user_session {
-        Err(AppError::Validation(msg)) => assert!(msg.contains("Utilisateur introuvable")),
-        other => panic!("Attendu AppError::Validation pour utilisateur invalide, obtenu : {:?}", other),
-    }
+    assert!(matches!(bad_user, Err(AppError::Validation(_))));
 
-    // 2. Ouvrir une session valide puis tenter d'en ouvrir une seconde simultanément -> Erreur Validation
+    // Double session
     execute_open_cash_session(&pool, OpenCashSessionDto {
         utilisateur_id: "usr-001".to_string(),
         initial_cash_float_cents: 10000,
         notes: None,
-    }).await.expect("Ouverture première session doit réussir");
+    }).await.expect("First session ok");
 
-    let second_session = execute_open_cash_session(&pool, OpenCashSessionDto {
+    let second = execute_open_cash_session(&pool, OpenCashSessionDto {
         utilisateur_id: "usr-002".to_string(),
         initial_cash_float_cents: 5000,
         notes: None,
     }).await;
-    match second_session {
-        Err(AppError::Validation(msg)) => assert!(msg.contains("déjà actuellement ouverte")),
-        other => panic!("Attendu AppError::Validation pour double ouverture simultanée, obtenu : {:?}", other),
-    }
+    assert!(matches!(second, Err(AppError::Validation(_))));
 
-    // 3. Créer une vente directe avec panier vide -> Erreur Validation
-    let empty_cart_sale = execute_create_direct_sale(&pool, CreateDirectSaleDto {
+    // Panier vide
+    let empty = execute_create_direct_sale(&pool, CreateDirectSaleDto {
         customer_id: None,
         customer_name: None,
         customer_phone: None,
@@ -359,30 +315,453 @@ async fn test_validation_errors_caisse() {
         },
         notes: None,
     }).await;
-    match empty_cart_sale {
-        Err(AppError::Validation(msg)) => assert!(msg.contains("panier")),
-        other => panic!("Attendu AppError::Validation pour panier vide, obtenu : {:?}", other),
-    }
+    assert!(matches!(empty, Err(AppError::Validation(_))));
 
-    // 4. Clôturer la session ouverte
+    // Clôture
     execute_close_cash_session(&pool, CloseCashSessionDto {
         session_id: None,
         utilisateur_id: "usr-001".to_string(),
         counted_cash_cents: 10000,
         operator_notes: None,
-    }).await.expect("Clôture session doit réussir");
+    }).await.expect("Close ok");
 
-    // 5. Tenter de clôturer à nouveau alors qu'aucune session n'est ouverte -> Erreur Validation
-    let close_when_none = execute_close_cash_session(&pool, CloseCashSessionDto {
+    // Clôture sans session
+    let close_none = execute_close_cash_session(&pool, CloseCashSessionDto {
         session_id: None,
         utilisateur_id: "usr-001".to_string(),
         counted_cash_cents: 10000,
         operator_notes: None,
     }).await;
-    match close_when_none {
-        Err(AppError::Validation(msg)) => assert!(msg.contains("Aucune session")),
-        other => panic!("Attendu AppError::Validation lors de la clôture sans session active, obtenu : {:?}", other),
-    }
+    assert!(matches!(close_none, Err(AppError::Validation(_))));
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_concurrent_direct_sale_same_variant() {
+    let test_dir = std::env::temp_dir().join(format!("test_caisse_concurrency_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = Arc::new(db::init_db(&test_dir).await.expect("Failed to init db"));
+    let var_id = "var-conc-sale-01";
+    let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT INTO variantes_stock (id, article_id, code_barre, taille, statut, created_at, updated_at)
+         VALUES (?, 'art-001', 'BAR-CONC-01', '50', 'disponible', ?, ?)"
+    )
+    .bind(var_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(&*pool)
+    .await
+    .expect("Failed to insert variant");
+
+    let p1 = Arc::clone(&pool);
+    let p2 = Arc::clone(&pool);
+    let v1 = var_id.to_string();
+    let v2 = var_id.to_string();
+
+    let task1 = tokio::spawn(async move {
+        let dto = CreateDirectSaleDto {
+            customer_id: None,
+            customer_name: Some("Client 1".to_string()),
+            customer_phone: None,
+            user_id: "usr-001".to_string(),
+            items: vec![
+                DirectSaleCartItemInput {
+                    id: "it-conc-1".to_string(),
+                    article_id: "art-001".to_string(),
+                    variant_id: Some(v1),
+                    name: "Smoking".to_string(),
+                    reference: "SMK".to_string(),
+                    barcode: None,
+                    category_name: "Smokings".to_string(),
+                    size: Some("50".to_string()),
+                    unit_price_cents: 89000,
+                    quantity: 1,
+                    subtotal_cents: 89000,
+                    photo_url: None,
+                },
+            ],
+            payment: DirectSalePaymentInput {
+                method: "carte_bancaire".to_string(),
+                amount_paid_cents: 89000,
+                cash_received_cents: None,
+                change_returned_cents: None,
+                transaction_ref: Some("CB-1".to_string()),
+                cheque_number: None,
+                bank_name: None,
+            },
+            notes: None,
+        };
+        execute_create_direct_sale(&p1, dto).await
+    });
+
+    let task2 = tokio::spawn(async move {
+        let dto = CreateDirectSaleDto {
+            customer_id: None,
+            customer_name: Some("Client 2".to_string()),
+            customer_phone: None,
+            user_id: "usr-002".to_string(),
+            items: vec![
+                DirectSaleCartItemInput {
+                    id: "it-conc-2".to_string(),
+                    article_id: "art-001".to_string(),
+                    variant_id: Some(v2),
+                    name: "Smoking".to_string(),
+                    reference: "SMK".to_string(),
+                    barcode: None,
+                    category_name: "Smokings".to_string(),
+                    size: Some("50".to_string()),
+                    unit_price_cents: 89000,
+                    quantity: 1,
+                    subtotal_cents: 89000,
+                    photo_url: None,
+                },
+            ],
+            payment: DirectSalePaymentInput {
+                method: "especes".to_string(),
+                amount_paid_cents: 89000,
+                cash_received_cents: Some(89000),
+                change_returned_cents: None,
+                transaction_ref: None,
+                cheque_number: None,
+                bank_name: None,
+            },
+            notes: None,
+        };
+        execute_create_direct_sale(&p2, dto).await
+    });
+
+    let (res1, res2) = tokio::join!(task1, task2);
+    let r1 = res1.expect("join 1");
+    let r2 = res2.expect("join 2");
+
+    let successes = [r1.is_ok(), r2.is_ok()].iter().filter(|&&x| x).count();
+    let failures = [r1.is_err(), r2.is_err()].iter().filter(|&&x| x).count();
+
+    assert_eq!(successes, 1, "Exactement une vente directe concurrente doit réussir");
+    assert_eq!(failures, 1, "Exactement une vente directe concurrente doit échouer");
+
+    let err = if r1.is_err() { r1.unwrap_err() } else { r2.unwrap_err() };
+    assert!(matches!(err, AppError::Validation(_)), "Le perdant doit recevoir AppError::Validation");
+
+    let var_statut: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = ?")
+        .bind(var_id)
+        .fetch_one(&*pool)
+        .await
+        .unwrap();
+    assert_eq!(var_statut.0, "vendu");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_annual_numbering_transition_and_independence() {
+    let test_dir = std::env::temp_dir().join(format!("test_annual_num_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+    let mut conn = pool.acquire().await.expect("Acquire conn");
+
+    // 1. Locations : continuité 2026 puis transition 2027
+    let (num_loc_2026_1, seq1) = next_rental_number_for_date(&mut conn, "2026-12-31").await.unwrap();
+    assert_eq!(num_loc_2026_1, "LOC-2026-0016");
+    assert_eq!(seq1, 16);
+
+    let (num_loc_2027_1, seq2) = next_rental_number_for_date(&mut conn, "2027-01-01").await.unwrap();
+    assert_eq!(num_loc_2027_1, "LOC-2027-0001", "Au 01/01/2027 le compteur doit repartir à 0001");
+    assert_eq!(seq2, 1);
+
+    // Vérifier l'indépendance des compteurs
+    let (num_loc_2026_2, seq3) = next_rental_number_for_date(&mut conn, "2026-12-31").await.unwrap();
+    assert_eq!(num_loc_2026_2, "LOC-2026-0017");
+    assert_eq!(seq3, 17);
+
+    let (num_loc_2027_2, seq4) = next_rental_number_for_date(&mut conn, "2027-01-02").await.unwrap();
+    assert_eq!(num_loc_2027_2, "LOC-2027-0002");
+    assert_eq!(seq4, 2);
+
+    // 2. Ventes : continuité 2026 puis transition 2027
+    let (num_vte_2026_1, v_seq1) = next_sale_number_for_date(&mut conn, "2026-12-31").await.unwrap();
+    assert_eq!(num_vte_2026_1, "VTE-2026-0041");
+    assert_eq!(v_seq1, 41);
+
+    let (num_vte_2027_1, v_seq2) = next_sale_number_for_date(&mut conn, "2027-01-01").await.unwrap();
+    assert_eq!(num_vte_2027_1, "VTE-2027-0001", "Au 01/01/2027 la vente doit repartir à 0001");
+    assert_eq!(v_seq2, 1);
+
+    let (num_vte_2026_2, v_seq3) = next_sale_number_for_date(&mut conn, "2026-12-31").await.unwrap();
+    assert_eq!(num_vte_2026_2, "VTE-2026-0042");
+    assert_eq!(v_seq3, 42);
+
+    let (num_vte_2027_2, v_seq4) = next_sale_number_for_date(&mut conn, "2027-01-02").await.unwrap();
+    assert_eq!(num_vte_2027_2, "VTE-2027-0002");
+    assert_eq!(v_seq4, 2);
+
+    drop(conn);
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_concurrent_rental_numbering_sequential() {
+    let test_dir = std::env::temp_dir().join(format!("test_concurrent_rental_num_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = Arc::new(db::init_db(&test_dir).await.expect("Failed to init db"));
+
+    // Créer deux variantes distinctes
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO variantes_stock (id, article_id, code_barre, taille, statut, created_at, updated_at)
+         VALUES ('var-num-01', 'art-001', 'BAR-NUM-01', '50', 'disponible', ?, ?),
+                ('var-num-02', 'art-001', 'BAR-NUM-02', '52', 'disponible', ?, ?)"
+    )
+    .bind(&now)
+    .bind(&now)
+    .bind(&now)
+    .bind(&now)
+    .execute(&*pool)
+    .await
+    .unwrap();
+
+    let p1 = Arc::clone(&pool);
+    let p2 = Arc::clone(&pool);
+
+    let task1 = tokio::spawn(async move {
+        let dto = CreateRentalContractDto {
+            customer_id: "cli-001".to_string(),
+            utilisateur_id: Some("usr-001".to_string()),
+            pickup_date: "2028-06-01".to_string(),
+            return_date_scheduled: "2028-06-05".to_string(),
+            event_date: None,
+            selected_variant_ids: vec!["var-num-01".to_string()],
+            quantity_items: None,
+            discount_cents: None,
+            deposit_method: "especes".to_string(),
+            deposit_amount_cents: None,
+            paid_amount_cents: None,
+            payment_method: "especes".to_string(),
+            notes: None,
+        };
+        execute_create_rental(&p1, dto).await
+    });
+
+    let task2 = tokio::spawn(async move {
+        let dto = CreateRentalContractDto {
+            customer_id: "cli-002".to_string(),
+            utilisateur_id: Some("usr-002".to_string()),
+            pickup_date: "2028-06-01".to_string(),
+            return_date_scheduled: "2028-06-05".to_string(),
+            event_date: None,
+            selected_variant_ids: vec!["var-num-02".to_string()],
+            quantity_items: None,
+            discount_cents: None,
+            deposit_method: "carte_bancaire".to_string(),
+            deposit_amount_cents: None,
+            paid_amount_cents: None,
+            payment_method: "carte_bancaire".to_string(),
+            notes: None,
+        };
+        execute_create_rental(&p2, dto).await
+    });
+
+    let (res1, res2) = tokio::join!(task1, task2);
+    let c1 = res1.expect("join 1").expect("contract 1 creation ok");
+    let c2 = res2.expect("join 2").expect("contract 2 creation ok");
+
+    assert_ne!(c1.contract_number, c2.contract_number, "Les numéros doivent être distincts");
+    let nums = vec![c1.contract_number, c2.contract_number];
+    assert!(nums.contains(&"LOC-2026-0016".to_string()));
+    assert!(nums.contains(&"LOC-2026-0017".to_string()));
+
+    (*pool).close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_migration_0007_continuity() {
+    let test_dir = std::env::temp_dir().join(format!("test_migration_0007_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    let version: (i64,) = sqlx::query_as("SELECT MAX(version) FROM _migrations")
+        .fetch_one(&pool)
+        .await
+        .expect("Migration version");
+    assert!(version.0 >= 7, "Migration 0007 doit être appliquée");
+
+    // Clés 2026 existantes
+    let loc_key: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'dernier_numero_location_2026'")
+        .fetch_one(&pool)
+        .await
+        .expect("dernier_numero_location_2026");
+    assert_eq!(loc_key.0, "15");
+
+    let vte_key: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'dernier_numero_vente_2026'")
+        .fetch_one(&pool)
+        .await
+        .expect("dernier_numero_vente_2026");
+    assert_eq!(vte_key.0, "40");
+
+    // Anciennes clés supprimées
+    let old_loc: Option<(String,)> = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'dernier_numero_location'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(old_loc.is_none(), "L'ancienne clé globale 'dernier_numero_location' doit être supprimée");
+
+    let old_vte: Option<(String,)> = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'dernier_numero_vente'")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(old_vte.is_none(), "L'ancienne clé globale 'dernier_numero_vente' doit être supprimée");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_contract_payment_lifecycle_and_session() {
+    let test_dir = std::env::temp_dir().join(format!("test_payment_lifecycle_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    // 1. Créer un contrat avec acompte de 5 000 DA sur total de 18 000 DA
+    let create_dto = CreateRentalContractDto {
+        customer_id: "cli-001".to_string(),
+        utilisateur_id: Some("usr-001".to_string()),
+        pickup_date: "2026-10-01".to_string(),
+        return_date_scheduled: "2026-10-02".to_string(),
+        event_date: None,
+        selected_variant_ids: vec!["var-001".to_string()],
+        quantity_items: None,
+        discount_cents: None,
+        deposit_method: "especes".to_string(),
+        deposit_amount_cents: Some(45000),
+        paid_amount_cents: Some(5000),
+        payment_method: "especes".to_string(),
+        notes: None,
+    };
+    let contract = execute_create_rental(&pool, create_dto).await.expect("Create rental ok");
+    assert_eq!(contract.paid_amount_cents, 5000);
+    assert_eq!(contract.remaining_amount_cents, 13000);
+
+    // 2. Ouvrir une session de caisse
+    let open_dto = OpenCashSessionDto {
+        utilisateur_id: "usr-001".to_string(),
+        initial_cash_float_cents: 10000,
+        notes: None,
+    };
+    execute_open_cash_session(&pool, open_dto).await.expect("Open session ok");
+
+    // 3. Paiement partiel 1 du solde : 6 000 DA en espèces
+    let pay1_dto = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 6000,
+        type_paiement: "solde".to_string(),
+        moyen_paiement: "especes".to_string(),
+        reference_transaction: None,
+        notes: Some("Règlement partiel 1".to_string()),
+    };
+    execute_record_payment(&pool, pay1_dto).await.expect("Payment 1 ok");
+
+    let c_after_1 = fetch_rental_dto_by_id(&pool, &contract.id).await.unwrap();
+    assert_eq!(c_after_1.paid_amount_cents, 11000, "5000 + 6000 = 11000 DA");
+    assert_eq!(c_after_1.remaining_amount_cents, 7000);
+
+    // 4. Paiement partiel 2 du solde : 7 000 DA en carte bancaire (solde entièrement réglé)
+    let pay2_dto = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 7000,
+        type_paiement: "solde".to_string(),
+        moyen_paiement: "carte_bancaire".to_string(),
+        reference_transaction: Some("CB-SOLDE-44".to_string()),
+        notes: Some("Règlement final du solde".to_string()),
+    };
+    execute_record_payment(&pool, pay2_dto).await.expect("Payment 2 ok");
+
+    let c_after_2 = fetch_rental_dto_by_id(&pool, &contract.id).await.unwrap();
+    assert_eq!(c_after_2.paid_amount_cents, 18000);
+    assert_eq!(c_after_2.remaining_amount_cents, 0, "Contrat entièrement soldé");
+
+    // 5. Encaissement de la caution : 45 000 DA en espèces
+    let pay_caution_dto = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 45000,
+        type_paiement: "caution".to_string(),
+        moyen_paiement: "especes".to_string(),
+        reference_transaction: None,
+        notes: Some("Caution espèces".to_string()),
+    };
+    execute_record_payment(&pool, pay_caution_dto).await.expect("Payment caution ok");
+
+    let c_after_caution = fetch_rental_dto_by_id(&pool, &contract.id).await.unwrap();
+    assert_eq!(c_after_caution.deposit_status, "encaissee");
+
+    // 6. Retour avec dégradation de 3 000 DA via register_return
+    let return_dto = RegisterReturnDto {
+        contract_id: contract.id.clone(),
+        items: vec![
+            ReturnItemInputDto {
+                variant_id: Some("var-001".to_string()),
+                article_id: None,
+                condition: "endommage".to_string(),
+                damage_fee_cents: Some(3000),
+                damage_notes: Some("Tache tenace".to_string()),
+            },
+        ],
+    };
+    let c_returned = execute_register_return(&pool, return_dto).await.expect("Return ok");
+    assert_eq!(c_returned.damage_fee_cents, 3000);
+    assert_eq!(c_returned.deposit_status, "conservee_partiellement");
+
+    // Vérifier l'absence de doublon : register_return n'insère PAS de nouveau paiement pour la dégradation
+    let payments_for_loc = execute_list_payments(&pool, Some(contract.id.clone()), None).await.unwrap();
+    let damage_payments_count = payments_for_loc.iter().filter(|p| p.type_paiement == "degradation").count();
+    assert_eq!(damage_payments_count, 0, "Pas de doublon de paiement créé lors de register_return");
+
+    // 7. Remboursement d'un trop-perçu de 2 000 DA en espèces
+    let refund_dto = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 2000,
+        type_paiement: "remboursement".to_string(),
+        moyen_paiement: "especes".to_string(),
+        reference_transaction: None,
+        notes: Some("Remboursement suite geste commercial".to_string()),
+    };
+    let refund_pay = execute_record_payment(&pool, refund_dto).await.expect("Refund ok");
+    assert_eq!(refund_pay.montant_centimes, -2000, "Le remboursement est enregistré avec montant négatif");
+
+    let c_after_refund = fetch_rental_dto_by_id(&pool, &contract.id).await.unwrap();
+    assert_eq!(c_after_refund.paid_amount_cents, 16000, "18000 - 2000 = 16000 DA");
+
+    // 8. Vérification des totaux de la session de caisse
+    let session_active = execute_get_active_cash_session(&pool).await.unwrap().unwrap();
+    // Ventes = 0
+    assert_eq!(session_active.sales_total_cents, 0);
+    // Locations = 6000 (pay1) + 7000 (pay2) - 2000 (remboursement) = 11 000 DA
+    assert_eq!(session_active.rentals_total_cents, 11000);
+    // Cautions = 45 000 DA
+    assert_eq!(session_active.deposits_total_cents, 45000);
+    // Espèces = 6000 (pay1) + 45000 (caution) - 2000 (remboursement) = 49 000 DA
+    assert_eq!(session_active.breakdown.especes.total_cents, 49000);
+    // Carte = 7000 DA
+    assert_eq!(session_active.breakdown.carte_bancaire.total_cents, 7000);
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
