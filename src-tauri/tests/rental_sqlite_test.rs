@@ -31,11 +31,11 @@ async fn test_migration_0005_and_fk_integrity() {
         fk_violations
     );
 
-    // 3. Vérification de la table app_meta
-    let meta_val: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'dernier_numero_location'")
+    // 3. Vérification de la table app_meta (clé annuelle 2026 migrée par 0007)
+    let meta_val: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'dernier_numero_location_2026'")
         .fetch_one(&pool)
         .await
-        .expect("app_meta clé dernier_numero_location introuvable");
+        .expect("app_meta clé dernier_numero_location_2026 introuvable");
     assert_eq!(meta_val.0, "15", "Le dernier numéro de location initialisé doit valoir 15");
 
     pool.close().await;
