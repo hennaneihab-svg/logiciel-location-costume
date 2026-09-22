@@ -94,9 +94,9 @@ async fn test_create_pressing_dispatch_simple_and_rented_rejection() {
         .expect("Fetch variante status failed");
     assert_eq!(status.0, "au_pressing");
 
-    // Tentative d'envoi d'une pièce actuellement en location (var-001 est sur loc-001 qui est en_cours)
+    // Tentative d'envoi d'une pièce actuellement en location (var-002 est sur loc-011 qui est en retard / en cours)
     let dto_rented = CreatePressingDispatchDto {
-        variante_ids: vec!["var-001".to_string()],
+        variante_ids: vec!["var-002".to_string()],
         prestataire_id: Some(prv.id),
         location_id: None,
         type_traitement: Some("repassage".to_string()),
@@ -124,8 +124,8 @@ async fn test_create_pressing_dispatch_future_conflict_force() {
     fs::create_dir_all(&test_dir).expect("Failed to create test dir");
     let pool = db::init_db(&test_dir).await.expect("Failed to init db");
 
-    // var-005 est réservée sur loc-003 avec date_retrait_prevue = 2026-06-18
-    // Créons un envoi pour retour prévu après cette date : 2026-06-25
+    // var-005 est réservée sur loc-014 avec date_retrait_prevue = 2026-09-17
+    // Créons un envoi pour retour prévu après cette date : 2026-09-22
     let dto_conflict = CreatePressingDispatchDto {
         variante_ids: vec!["var-005".to_string()],
         prestataire_id: None, // Atelier interne
@@ -133,7 +133,7 @@ async fn test_create_pressing_dispatch_future_conflict_force() {
         type_traitement: Some("nettoyage_complet".to_string()),
         motif: Some("tache".to_string()),
         cout_centimes: Some(0),
-        date_retour_prevue: "2026-06-25".to_string(),
+        date_retour_prevue: "2026-09-22".to_string(),
         notes: None,
         force: false,
         utilisateur_id: Some("usr-001".to_string()),
@@ -150,7 +150,7 @@ async fn test_create_pressing_dispatch_future_conflict_force() {
         type_traitement: Some("nettoyage_complet".to_string()),
         motif: Some("tache".to_string()),
         cout_centimes: Some(0),
-        date_retour_prevue: "2026-06-25".to_string(),
+        date_retour_prevue: "2026-09-22".to_string(),
         notes: None,
         force: true,
         utilisateur_id: Some("usr-001".to_string()),
@@ -178,7 +178,7 @@ async fn test_create_pressing_dispatch_multi_variant_atomic_rollback() {
         .unwrap();
 
     let dto = CreatePressingDispatchDto {
-        variante_ids: vec!["var-007".to_string(), "var-008".to_string(), "var-inexistante-999".to_string()],
+        variante_ids: vec!["var-003".to_string(), "var-004".to_string(), "var-inexistante-999".to_string()],
         prestataire_id: None,
         location_id: None,
         type_traitement: Some("complet".to_string()),
@@ -201,10 +201,10 @@ async fn test_create_pressing_dispatch_multi_variant_atomic_rollback() {
     assert_eq!(count_before.0, count_after.0, "Rollback complet: aucun envoi ne doit être créé");
 
     // Vérification que les pièces n'ont pas changé de statut
-    let st7: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-007'").fetch_one(&pool).await.unwrap();
-    let st8: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-008'").fetch_one(&pool).await.unwrap();
-    assert_ne!(st7.0, "au_pressing");
-    assert_ne!(st8.0, "au_pressing");
+    let st3: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-003'").fetch_one(&pool).await.unwrap();
+    let st4: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-004'").fetch_one(&pool).await.unwrap();
+    assert_eq!(st3.0, "disponible");
+    assert_eq!(st4.0, "disponible");
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
