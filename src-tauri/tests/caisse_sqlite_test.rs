@@ -766,3 +766,251 @@ async fn test_contract_payment_lifecycle_and_session() {
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[tokio::test]
+async fn test_migration_0009_sessions_caisse_totals_rename() {
+    let test_dir = std::env::temp_dir().join(format!("test_caisse_mig0009_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let db_path = test_dir.join("costume_rental.db");
+    let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    let opts = SqliteConnectOptions::from_str(&db_url)
+        .expect("Valid db url")
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true);
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts)
+        .await
+        .expect("Failed to connect");
+
+    // Exécuter manuellement les migrations 0001 à 0008 (état antérieur à 0009)
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS _migrations (
+            version INTEGER PRIMARY KEY,
+            nom TEXT NOT NULL,
+            appliquee_le TEXT NOT NULL
+        );"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    for stmt in db::MIGRATION_0001.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (1, '0001_initial_schema', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    for stmt in db::MIGRATION_0002.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (2, '0002_seed_demo_data', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    for stmt in db::MIGRATION_0005.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (5, '0005_rental_caisse_sqlite_tables', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    for stmt in db::MIGRATION_0006.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (6, '0006_fix_lignes_location_fk_restrict', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    // Insérer une session avec les anciens noms de colonnes (total_locations_centimes, total_cautions_centimes, total_ventes_centimes)
+    sqlx::query(
+        "INSERT INTO sessions_caisse (
+            id, numero_session, utilisateur_id, date_session, statut,
+            fonds_initial_centimes, total_especes_theorique_centimes,
+            total_ventes_centimes, total_locations_centimes, total_cautions_centimes,
+            total_especes_centimes, total_carte_centimes, total_cheque_centimes, total_virement_centimes,
+            opened_at
+        ) VALUES ('ses-legacy-1', 'Z-20260922-99', 'usr-001', '2026-09-22', 'cloturee', 10000, 35000, 25000, 15000, 40000, 25000, 15000, 0, 0, ?)"
+    )
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Insert legacy session ok");
+
+    // Maintenant, exécuter la suite complète de migrations (qui va déclencher 0009)
+    db::run_migrations(&pool).await.expect("Migrations up to 0009 ok");
+
+    // Vérifier que la migration 9 est bien inscrite
+    let row9: Option<(i64,)> = sqlx::query_as("SELECT version FROM _migrations WHERE version = 9")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(row9.is_some(), "Migration 0009 enregistrée");
+
+    // Vérifier que les colonnes ont bien été renommées dans PRAGMA table_info
+    let cols: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('sessions_caisse')")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let col_names: Vec<String> = cols.into_iter().map(|c| c.0).collect();
+
+    assert!(col_names.contains(&"rentals_total_centimes".to_string()), "Colonne rentals_total_centimes présente");
+    assert!(col_names.contains(&"deposits_total_centimes".to_string()), "Colonne deposits_total_centimes présente");
+    assert!(col_names.contains(&"sales_total_centimes".to_string()), "Colonne sales_total_centimes présente");
+
+    // Vérifier l'absence de perte de données : les valeurs de la session legacy sont intactes
+    use sqlx::Row;
+    let row = sqlx::query("SELECT sales_total_centimes, rentals_total_centimes, deposits_total_centimes FROM sessions_caisse WHERE id = 'ses-legacy-1'")
+        .fetch_one(&pool)
+        .await
+        .expect("Row fetch ok");
+
+    let s_cents: i64 = row.get("sales_total_centimes");
+    let r_cents: i64 = row.get("rentals_total_centimes");
+    let d_cents: i64 = row.get("deposits_total_centimes");
+
+    assert_eq!(s_cents, 25000, "Ventes préservées à 25 000 DA");
+    assert_eq!(r_cents, 15000, "Locations préservées à 15 000 DA");
+    assert_eq!(d_cents, 40000, "Cautions préservées à 40 000 DA");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_unassigned_payment_reconciliation_at_close_session() {
+    let test_dir = std::env::temp_dir().join(format!("test_reconciliation_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Init db ok");
+
+    // S'assurer qu'aucune session n'est ouverte
+    let active = execute_get_active_cash_session(&pool).await.unwrap();
+    assert!(active.is_none(), "Aucune session ouverte au départ");
+
+    // 1. Créer une location
+    let today = today_local();
+    let contract_dto = CreateRentalContractDto {
+        customer_id: "cli-001".to_string(),
+        utilisateur_id: Some("usr-001".to_string()),
+        pickup_date: format!("{}-01-01", &today[0..4]),
+        return_date_scheduled: format!("{}-01-05", &today[0..4]),
+        event_date: None,
+        selected_variant_ids: vec!["var-001".to_string()],
+        quantity_items: None,
+        discount_cents: Some(0),
+        deposit_method: "especes".to_string(),
+        deposit_amount_cents: Some(20000),
+        paid_amount_cents: Some(0),
+        payment_method: "especes".to_string(),
+        notes: Some("Contrat pour test réconciliation".to_string()),
+    };
+    let contract = execute_create_rental(&pool, contract_dto).await.expect("Create rental ok");
+
+    // 2. Enregistrer un paiement SANS SESSION OUVERTE (ex: 5 000 DA en espèces pour solde)
+    let pay_without_session = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 5000,
+        type_paiement: "solde".to_string(),
+        moyen_paiement: "especes".to_string(),
+        reference_transaction: None,
+        notes: Some("Paiement effectué hors session".to_string()),
+    };
+    execute_record_payment(&pool, pay_without_session).await.expect("Payment hors session ok");
+
+    // 3. Ouvrir une session de caisse avec fonds de 10 000 DA
+    let open_dto = OpenCashSessionDto {
+        utilisateur_id: "usr-001".to_string(),
+        initial_cash_float_cents: 10000,
+        notes: Some("Session de caisse journée".to_string()),
+    };
+    let session_opened = execute_open_cash_session(&pool, open_dto).await.expect("Open session ok");
+    assert_eq!(session_opened.initial_cash_float_cents, 10000);
+    assert_eq!(session_opened.cloture_number, format!("Z-{}-01", today.replace('-', "")));
+
+    // 4. Enregistrer un second paiement PENDANT la session (7 000 DA par carte)
+    let pay_during_session = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 7000,
+        type_paiement: "solde".to_string(),
+        moyen_paiement: "carte_bancaire".to_string(),
+        reference_transaction: Some("CB-REC-01".to_string()),
+        notes: Some("Paiement pendant session".to_string()),
+    };
+    execute_record_payment(&pool, pay_during_session).await.expect("Payment pendant session ok");
+
+    // 5. Enregistrer un encaissement de caution (20 000 DA en espèces)
+    let pay_caution = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 20000,
+        type_paiement: "caution".to_string(),
+        moyen_paiement: "especes".to_string(),
+        reference_transaction: None,
+        notes: Some("Caution espèces".to_string()),
+    };
+    execute_record_payment(&pool, pay_caution).await.expect("Caution ok");
+
+    // 6. Clôturer la session de caisse
+    // Espèces attendues réconciliées : 10 000 (fonds) + 5 000 (pay1 hors session) + 20 000 (caution) = 35 000 DA
+    let close_dto = CloseCashSessionDto {
+        session_id: Some(session_opened.id.clone()),
+        utilisateur_id: "usr-001".to_string(),
+        counted_cash_cents: 35000,
+        operator_notes: Some("Clôture avec réconciliation confirmée".to_string()),
+    };
+    let closed_session = execute_close_cash_session(&pool, close_dto).await.expect("Close session ok");
+
+    assert_eq!(closed_session.status, "cloturee");
+    assert_eq!(closed_session.initial_cash_float_cents, 10000);
+    assert_eq!(closed_session.rentals_total_cents, 12000, "5000 hors session + 7000 pendant session");
+    assert_eq!(closed_session.deposits_total_cents, 20000);
+    assert_eq!(closed_session.sales_total_cents, 0);
+    assert_eq!(closed_session.theoretical_cash_cents, 35000);
+    assert_eq!(closed_session.counted_cash_cents, Some(35000));
+    assert_eq!(closed_session.discrepancy_cents, Some(0));
+    assert_eq!(closed_session.breakdown.especes.total_cents, 25000, "5000 rental + 20000 caution");
+    assert_eq!(closed_session.breakdown.carte_bancaire.total_cents, 7000);
+
+    // 7. Ouvrir une DEUXIÈME session le même jour : numéro incrémenté et pas de ré-incorporation des paiements clôturés
+    let open_dto_2 = OpenCashSessionDto {
+        utilisateur_id: "usr-001".to_string(),
+        initial_cash_float_cents: 8000,
+        notes: Some("Deuxième session de caisse".to_string()),
+    };
+    let session_2 = execute_open_cash_session(&pool, open_dto_2).await.expect("Open session 2 ok");
+    assert_eq!(session_2.cloture_number, format!("Z-{}-02", today.replace('-', "")));
+    assert_eq!(session_2.initial_cash_float_cents, 8000);
+
+    let close_dto_2 = CloseCashSessionDto {
+        session_id: Some(session_2.id.clone()),
+        utilisateur_id: "usr-001".to_string(),
+        counted_cash_cents: 8000,
+        operator_notes: Some("Clôture session 2 sans vente".to_string()),
+    };
+    let closed_session_2 = execute_close_cash_session(&pool, close_dto_2).await.expect("Close session 2 ok");
+    assert_eq!(closed_session_2.rentals_total_cents, 0, "Paiements antérieurs déjà clôturés non repris dans session 2");
+    assert_eq!(closed_session_2.theoretical_cash_cents, 8000);
+    assert_eq!(closed_session_2.discrepancy_cents, Some(0));
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
