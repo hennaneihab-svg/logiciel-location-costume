@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { usePressingStore } from "@/store/pressingStore";
 import { formatDA } from "@/lib/utils";
 import {
@@ -18,6 +19,7 @@ import { NewPressingDispatchModal } from "./NewPressingDispatchModal";
 import type { PressingDispatch } from "@/types/pressing";
 
 export const PressingPage: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const {
     dispatches,
     providers,
@@ -32,9 +34,18 @@ export const PressingPage: React.FC = () => {
     setDispatchPhoto,
   } = usePressingStore();
 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState(searchParams.get("search") || "");
+  const [statusFilter, setStatusFilter] = useState<string>(
+    searchParams.get("status") === "en_cours" ? "en_cours" : "all"
+  );
   const [providerFilter, setProviderFilter] = useState<string>("all");
+
+  useEffect(() => {
+    const q = searchParams.get("search");
+    if (q !== null) setSearchQuery(q);
+    const s = searchParams.get("status");
+    if (s === "en_cours") setStatusFilter("en_cours");
+  }, [searchParams]);
 
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [receiveModalDispatch, setReceiveModalDispatch] = useState<PressingDispatch | null>(null);

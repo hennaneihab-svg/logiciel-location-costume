@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useRentalStore } from "@/store/rentalStore";
+import { usePressingStore } from "@/store/pressingStore";
 import { useAlertStore } from "@/store/alertStore";
 import { notifyUrgentAlert } from "@/services/notificationService";
 import { toast } from "sonner";
@@ -13,6 +14,8 @@ import { toast } from "sonner";
  */
 export function useAlertEngine() {
   const contracts = useRentalStore((s) => s.contracts);
+  const dispatches = usePressingStore((s) => s.dispatches);
+  const isModuleActive = usePressingStore((s) => s.isModuleActive);
   const isRunningRef = useRef(false);
 
   useEffect(() => {
@@ -21,12 +24,22 @@ export function useAlertEngine() {
       isRunningRef.current = true;
 
       try {
-        const { generateAlertsFromRentals, markNotificationSent } = useAlertStore.getState();
+        const {
+          generateAlertsFromRentals,
+          generateAlertsFromPressing,
+          markNotificationSent,
+        } = useAlertStore.getState();
 
         // 1. Calcul des alertes de retour depuis les contrats
         const alertIdsToNotify = generateAlertsFromRentals(contracts);
 
-        // 2. Traitement des notifications pour les alertes urgentes (Retard, Jour-J, J-1)
+        // 2. Calcul des alertes pressing si le module est actif
+        if (isModuleActive) {
+          const pressingAlertIds = generateAlertsFromPressing(dispatches);
+          alertIdsToNotify.push(...pressingAlertIds);
+        }
+
+        // 3. Traitement des notifications pour les alertes urgentes
         const currentAlerts = useAlertStore.getState().alerts;
         for (const alertId of alertIdsToNotify) {
           const alert = currentAlerts.find((a) => a.id === alertId);
@@ -35,14 +48,19 @@ export function useAlertEngine() {
           // Notification native (Tauri / Web)
           await notifyUrgentAlert(
             alert.category,
-            alert.customer_name ?? "Client inconnu",
+            alert.customer_name ?? alert.provider_name ?? "Atelier",
             alert.article_name ?? "Article",
-            alert.contract_number ?? "N/A"
+            alert.contract_number ?? alert.pressing_dispatch_number ?? "N/A"
           );
 
           // Toast in-app
           if (alert.category === "retard_retour") {
             toast.error(`Retard constaté : ${alert.title}`, {
+              description: alert.description,
+              duration: 8000,
+            });
+          } else if (alert.category === "retard_pressing") {
+            toast.error(`Retard pressing critique : ${alert.title}`, {
               description: alert.description,
               duration: 8000,
             });
@@ -73,5 +91,5 @@ export function useAlertEngine() {
     const interval = setInterval(runCheck, ONE_HOUR);
 
     return () => clearInterval(interval);
-  }, [contracts]);
+  }, [contracts, dispatches, isModuleActive]);
 }

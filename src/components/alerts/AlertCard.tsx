@@ -27,6 +27,7 @@ import {
   MessageCircle,
   User,
   Shirt,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn, formatCents, formatDate } from "@/lib/utils";
@@ -64,6 +65,14 @@ const CATEGORY_CONFIG: Record<
     borderClass: "border-l-red-500",
     bgClass: "bg-red-500/5",
     glowClass: "animate-pulse ring-1 ring-red-500/30 shadow-sm shadow-red-500/10",
+  },
+  retard_pressing: {
+    label: "Retard pressing",
+    icon: Sparkles,
+    badgeClass: "bg-amber-500/20 text-amber-500 border border-amber-500/30",
+    borderClass: "border-l-amber-500",
+    bgClass: "bg-amber-500/5",
+    glowClass: "animate-pulse ring-1 ring-amber-500/30 shadow-sm shadow-amber-500/10",
   },
   retour_jour_j: {
     label: "Retour Aujourd'hui",
@@ -149,6 +158,15 @@ export const AlertCard: React.FC<AlertCardProps> = ({
     if (alert.contract_number) {
       useRentalStore.getState().setSearchQuery(alert.contract_number);
       navigate("/locations");
+    }
+  };
+
+  const handleGoToPressing = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (alert.pressing_dispatch_number) {
+      navigate(`/pressing?search=${encodeURIComponent(alert.pressing_dispatch_number)}`);
+    } else {
+      navigate("/pressing");
     }
   };
 
@@ -273,6 +291,18 @@ export const AlertCard: React.FC<AlertCardProps> = ({
               </button>
             )}
 
+            {alert.pressing_dispatch_number && (
+              <button
+                type="button"
+                onClick={handleGoToPressing}
+                title="Cliquer pour ouvrir l'envoi pressing"
+                className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 font-mono font-bold flex items-center gap-1 transition-colors border border-amber-500/20 cursor-pointer"
+              >
+                <span>{alert.pressing_dispatch_number}</span>
+                <ExternalLink className="w-2.5 h-2.5" />
+              </button>
+            )}
+
             {alert.article_name && (
               <span className="text-[10px] px-2 py-0.5 rounded bg-secondary text-muted-foreground truncate max-w-[200px] inline-flex items-center gap-1">
                 <Shirt className="w-3 h-3 text-muted-foreground shrink-0" />
@@ -364,6 +394,19 @@ export const AlertCard: React.FC<AlertCardProps> = ({
               >
                 <ExternalLink className="w-3 h-3 text-primary" />
                 <span className="hidden md:inline">Fiche</span>
+              </button>
+            )}
+
+            {/* Voir l'envoi pressing direct */}
+            {alert.category === "retard_pressing" && (
+              <button
+                type="button"
+                onClick={handleGoToPressing}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-foreground text-background hover:bg-foreground/90 text-[10px] font-semibold transition-all shadow-xs"
+                title="Accéder directement à l'envoi pressing"
+              >
+                <ExternalLink className="w-3 h-3" />
+                <span>Voir l'envoi</span>
               </button>
             )}
 

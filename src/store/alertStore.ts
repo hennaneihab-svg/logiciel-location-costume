@@ -209,6 +209,21 @@ interface AlertStoreState {
     }>
   ) => string[]; // IDs des alertes nouvellement critiques (à notifier)
 
+  generateAlertsFromPressing: (
+    dispatches: Array<{
+      id: string;
+      numero_envoi: string;
+      statut: string;
+      nom_prestataire?: string;
+      prestataire_id?: string | null;
+      date_retour_prevue: string;
+      designation_article?: string;
+      taille?: string;
+      variante_id?: string;
+      article_id?: string;
+    }>
+  ) => string[];
+
   // Actions — Traçabilité
   markAsViewed: (alertId: string, by?: string) => void;
   markAsProcessed: (alertId: string, comment: string, by?: string) => void;
@@ -308,6 +323,7 @@ export const useAlertStore = create<AlertStoreState>((set, get) => ({
 
         const labels: Record<AlertCategory, string> = {
           retard_retour: `Retard +${daysOverdue}j — ${contract.contract_number}`,
+          retard_pressing: "",
           retour_jour_j: `Retour Aujourd'hui — ${contract.contract_number}`,
           retour_j1: `Rappel J-1 — ${contract.contract_number}`,
           retour_j2: `Rappel J-2 — ${contract.contract_number}`,
@@ -318,6 +334,7 @@ export const useAlertStore = create<AlertStoreState>((set, get) => ({
 
         const descriptions: Record<AlertCategory, string> = {
           retard_retour: `${articleName} non restitué depuis ${daysOverdue} jour${daysOverdue > 1 ? "s" : ""}.`,
+          retard_pressing: "",
           retour_jour_j: `${articleName} doit être rendu aujourd'hui (avant 19h).`,
           retour_j1: `${articleName} retour prévu demain.`,
           retour_j2: `${articleName} retour prévu dans 2 jours.`,
@@ -382,6 +399,99 @@ export const useAlertStore = create<AlertStoreState>((set, get) => ({
             notification_sent: !shouldNotify,
           };
           if (shouldNotify) newAlertIds.push(newId);
+          alertsMap.set(dedupKey, newAlert);
+        }
+      }
+
+      const updated = Array.from(alertsMap.values());
+      dbStorage.save(dbStorage.KEYS.ALERTS, updated);
+      return { alerts: updated };
+    });
+
+    return newAlertIds;
+  },
+
+  generateAlertsFromPressing: (dispatches) => {
+    const now = new Date().toISOString();
+    const newAlertIds: string[] = [];
+
+    set((state) => {
+      const alertsMap = new Map<string, AppAlert>(
+        state.alerts.map((a) => [a.dedup_key, a])
+      );
+
+      for (const d of dispatches) {
+        const dedupKey = `${d.id}_retard_pressing`;
+
+        // Si l'envoi est reçu ou annulé, on résout/supprime l'alerte
+        if (d.statut === "recu" || d.statut === "annule") {
+          if (alertsMap.has(dedupKey)) {
+            alertsMap.delete(dedupKey);
+          }
+          continue;
+        }
+
+        const daysOverdue = daysDiff(d.date_retour_prevue);
+        if (daysOverdue <= 0) {
+          // Pas de retard
+          if (alertsMap.has(dedupKey)) {
+            alertsMap.delete(dedupKey);
+          }
+          continue;
+        }
+
+        // Retard avéré
+        const severity: AlertSeverity = daysOverdue >= 3 ? "critique" : "avertissement";
+        const providerName =
+          d.nom_prestataire || (d.prestataire_id ? "Prestataire" : "Atelier interne");
+        const title = `Retard pressing +${daysOverdue}j — ${d.numero_envoi}`;
+        const description = `Pièce ${d.designation_article || "envoi"} non revenue de ${providerName} (date prévue : ${d.date_retour_prevue}).`;
+
+        const existing = alertsMap.get(dedupKey);
+        if (existing) {
+          const wasOverdue = existing.days_overdue ?? 0;
+          const updated: AppAlert = {
+            ...existing,
+            severity,
+            title,
+            description,
+            days_overdue: daysOverdue,
+            updated_at: now,
+            status:
+              existing.status === "active" || existing.status === "vue"
+                ? daysOverdue > wasOverdue
+                  ? "active"
+                  : existing.status
+                : existing.status,
+          };
+          if (!existing.notification_sent && severity === "critique") {
+            newAlertIds.push(existing.id);
+          }
+          alertsMap.set(dedupKey, updated);
+        } else {
+          const newId = `alr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          const newAlert: AppAlert = {
+            id: newId,
+            dedup_key: dedupKey,
+            category: "retard_pressing",
+            severity,
+            status: "active",
+            title,
+            description,
+            created_at: now,
+            updated_at: now,
+            pressing_dispatch_id: d.id,
+            pressing_dispatch_number: d.numero_envoi,
+            provider_name: providerName,
+            article_id: d.article_id,
+            article_name: d.designation_article,
+            variant_id: d.variante_id,
+            variant_size: d.taille,
+            return_date_scheduled: d.date_retour_prevue,
+            days_overdue: daysOverdue,
+            notification_sent: false,
+          };
+          newAlertIds.push(newId);
           alertsMap.set(dedupKey, newAlert);
         }
       }

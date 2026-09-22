@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   TrendingUp,
@@ -7,9 +8,11 @@ import {
   AlertTriangle,
   ArrowUpRight,
   ArrowDownRight,
+  Sparkles,
 } from "lucide-react";
 import { AnimatedCounter } from "./AnimatedCounter";
 import { formatCents } from "@/lib/utils";
+import { usePressingStore } from "@/store/pressingStore";
 import type { FullDashboardStats } from "@/types/dashboard";
 
 interface KpiCardsSectionProps {
@@ -38,14 +41,34 @@ export const KpiCardsSection: React.FC<KpiCardsSectionProps> = ({
   onAlertesClick,
   onLocationsClick,
 }) => {
+  const navigate = useNavigate();
   const isPositiveProgression = stats.progression_ca_pourcentage >= 0;
+  const isModuleActive = usePressingStore((s) => s.isModuleActive);
+  const dispatches = usePressingStore((s) => s.dispatches);
+
+  const { piecesAuPressing, retardsPressing } = useMemo(() => {
+    const today = new Date().toISOString().split("T")[0];
+    let pieces = 0;
+    let retards = 0;
+    for (const d of dispatches) {
+      if (d.statut === "envoye" || d.statut === "en_traitement") {
+        pieces++;
+        if (d.date_retour_prevue < today) {
+          retards++;
+        }
+      }
+    }
+    return { piecesAuPressing: pieces, retardsPressing: retards };
+  }, [dispatches]);
 
   return (
     <motion.div
       variants={containerVariants}
       initial="hidden"
       animate="visible"
-      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+      className={`grid grid-cols-1 sm:grid-cols-2 ${
+        isModuleActive ? "lg:grid-cols-5" : "lg:grid-cols-4"
+      } gap-4`}
     >
       {/* KPI 1 : CA de la Période */}
       <motion.div
@@ -157,6 +180,39 @@ export const KpiCardsSection: React.FC<KpiCardsSectionProps> = ({
           </div>
         </div>
       </motion.div>
+
+      {/* KPI 5 : Pièces au Pressing (conditionné à l'activation du module) */}
+      {isModuleActive && (
+        <motion.div
+          variants={cardVariants}
+          onClick={() => navigate("/pressing?status=en_cours")}
+          className="p-4 rounded-xl bg-card border border-border group hover:border-border/80 transition-colors cursor-pointer"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Pièces au Pressing
+            </span>
+            <div className="p-1.5 rounded-md bg-muted text-foreground">
+              <Sparkles className="w-4 h-4 text-amber-500" />
+            </div>
+          </div>
+          <div className="mt-3">
+            <div className="text-2xl font-bold tracking-tight text-foreground">
+              <AnimatedCounter value={piecesAuPressing} />
+            </div>
+            <div className="text-[11px] mt-1 flex items-center gap-1">
+              {retardsPressing > 0 ? (
+                <span className="text-amber-500 font-medium flex items-center gap-0.5">
+                  <AlertTriangle className="w-3 h-3" />
+                  <span>{retardsPressing} en retard</span>
+                </span>
+              ) : (
+                <span className="text-muted-foreground">Aucun retard</span>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      )}
     </motion.div>
   );
 };

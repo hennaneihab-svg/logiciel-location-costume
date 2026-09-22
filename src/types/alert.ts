@@ -10,6 +10,7 @@ export type AlertSeverity = "critique" | "avertissement" | "info";
 /** Catégorie fonctionnelle de l'alerte */
 export type AlertCategory =
   | "retard_retour"     // Article non rendu après la date prévue
+  | "retard_pressing"   // Pièce non revenue du pressing après la date prévue
   | "retour_j1"         // Retour prévu demain (J-1)
   | "retour_j2"         // Retour prévu dans 2 jours (J-2)
   | "retour_j3"         // Retour prévu dans 3 jours (J-3)
@@ -28,13 +29,14 @@ export type AlertStatus = "active" | "vue" | "traitee" | "acquittee";
 
 /** Priorité d'affichage pour le tri (plus bas = plus urgent) */
 export const ALERT_URGENCY: Record<AlertCategory, number> = {
-  retard_retour:  0,
-  retour_jour_j:  1,
-  retour_j1:      2,
-  retour_j2:      3,
-  retour_j3:      4,
-  stock_bas:      5,
-  article_inactif: 6,
+  retard_retour:   0,
+  retard_pressing: 1,
+  retour_jour_j:   2,
+  retour_j1:       3,
+  retour_j2:       4,
+  retour_j3:       5,
+  stock_bas:       6,
+  article_inactif: 7,
 };
 
 /** Une alerte unitaire */
@@ -71,6 +73,11 @@ export interface AppAlert {
   current_stock?: number;
   min_stock_threshold?: number;
   days_since_last_rental?: number;
+
+  // ── Données contextuelles Pressing ────────────────────────────────────────
+  pressing_dispatch_id?: string;
+  pressing_dispatch_number?: string;
+  provider_name?: string;
 
   // ── Traçabilité vue / traitée ─────────────────────────────────────────────
   viewed_at?: string;         // ISO 8601 UTC — marqué "vu" par un opérateur
