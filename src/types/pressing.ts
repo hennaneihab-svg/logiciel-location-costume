@@ -76,3 +76,16 @@ export interface CreatePressingDispatchInput {
   notes?: string;
   utilisateur_id?: string;
 }
+
+export interface SkippedPressingItem {
+  variante_id: string;
+  article_nom: string;
+  numero_envoi_actif: string;
+  message: string;
+}
+
+export interface CreatePressingDispatchResult {
+  dispatches: PressingDispatch[];
+  skipped: SkippedPressingItem[];
+}
+

@@ -90,6 +90,20 @@ pub struct CreatePressingDispatchDto {
     pub utilisateur_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkippedPressingItemDto {
+    pub variante_id: String,
+    pub article_nom: String,
+    pub numero_envoi_actif: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreatePressingDispatchResultDto {
+    pub dispatches: Vec<PressingDispatchDto>,
+    pub skipped: Vec<SkippedPressingItemDto>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SetPressingPhotoDto {
     pub envoi_id: String,
@@ -364,14 +378,14 @@ pub async fn execute_list_pressing_providers(
 pub async fn execute_create_pressing_dispatch(
     pool: &SqlitePool,
     dto: CreatePressingDispatchDto,
-) -> Result<Vec<PressingDispatchDto>, AppError> {
+) -> Result<CreatePressingDispatchResultDto, AppError> {
     if dto.variante_ids.is_empty() {
         return Err(AppError::Validation("Au moins une pièce doit être sélectionnée.".to_string()));
     }
 
     let mut tx = ImmediateTx::begin(pool).await?;
 
-    let created_ids = match async {
+    let (created_ids, skipped_items) = match async {
         // Résolution utilisateur
         let user_id = if let Some(ref uid) = dto.utilisateur_id {
             if !uid.trim().is_empty() {
@@ -412,7 +426,7 @@ pub async fn execute_create_pressing_dispatch(
         let today = today_local();
         let now = chrono::Utc::now().to_rfc3339();
         let mut ids = Vec::new();
-        let mut skipped_messages = Vec::new();
+        let mut skipped_items: Vec<SkippedPressingItemDto> = Vec::new();
 
         for var_id in &dto.variante_ids {
             // 1. Récupérer variante et article
@@ -447,7 +461,12 @@ pub async fn execute_create_pressing_dispatch(
                     "La pièce '{}' est déjà envoyée au pressing sous {}",
                     art_nom, num_actif
                 );
-                skipped_messages.push(msg);
+                skipped_items.push(SkippedPressingItemDto {
+                    variante_id: var_id.clone(),
+                    article_nom: art_nom.clone(),
+                    numero_envoi_actif: num_actif,
+                    message: msg,
+                });
                 continue;
             }
 
@@ -551,17 +570,17 @@ pub async fn execute_create_pressing_dispatch(
         }
 
         if ids.is_empty() {
-            if let Some(first_msg) = skipped_messages.into_iter().next() {
-                return Err(AppError::Validation(first_msg));
+            if let Some(first) = skipped_items.into_iter().next() {
+                return Err(AppError::Validation(first.message));
             }
             return Err(AppError::Validation("Aucune pièce valide à envoyer au pressing.".to_string()));
         }
 
-        Ok(ids)
+        Ok((ids, skipped_items))
     }.await {
-        Ok(ids) => {
+        Ok(res) => {
             tx.commit().await?;
-            ids
+            res
         }
         Err(e) => {
             let _ = tx.rollback().await;
@@ -577,7 +596,10 @@ pub async fn execute_create_pressing_dispatch(
         }
     }
 
-    Ok(dispatches)
+    Ok(CreatePressingDispatchResultDto {
+        dispatches,
+        skipped: skipped_items,
+    })
 }
 
 pub async fn execute_receive_pressing_dispatch(
@@ -1155,7 +1177,7 @@ pub async fn list_pressing_providers(
 pub async fn create_pressing_dispatch(
     dto: CreatePressingDispatchDto,
     state: State<'_, DbState>,
-) -> Result<Vec<PressingDispatchDto>, AppError> {
+) -> Result<CreatePressingDispatchResultDto, AppError> {
     execute_create_pressing_dispatch(&state.pool, dto).await
 }
 

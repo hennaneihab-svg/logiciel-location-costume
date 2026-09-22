@@ -7,8 +7,11 @@ import type {
   CreatePressingProviderInput,
   UpdatePressingProviderInput,
   CreatePressingDispatchInput,
+  CreatePressingDispatchResult,
+  SkippedPressingItem,
 } from "@/types/pressing";
 import { useAuthStore } from "./authStore";
+import { useStockStore } from "./stockStore";
 
 interface PressingStoreState {
   providers: PressingProvider[];
@@ -35,7 +38,7 @@ interface PressingStoreState {
     date_debut?: string;
     date_fin?: string;
   }) => Promise<void>;
-  createDispatch: (input: CreatePressingDispatchInput) => Promise<PressingDispatch[]>;
+  createDispatch: (input: CreatePressingDispatchInput) => Promise<CreatePressingDispatchResult>;
   receiveDispatch: (envoiId: string, dateRetourEffective?: string, notes?: string) => Promise<void>;
   markProblem: (envoiId: string, notes?: string) => Promise<void>;
   cancelDispatch: (envoiId: string) => Promise<void>;
@@ -228,46 +231,99 @@ export const usePressingStore = create<PressingStoreState>((set, get) => ({
       };
 
       if (isTauri()) {
-        const created = await invokeCommand<PressingDispatch[]>("create_pressing_dispatch", {
+        const result = await invokeCommand<CreatePressingDispatchResult>("create_pressing_dispatch", {
           dto: payload,
         });
-        set((state) => ({ dispatches: [...created, ...state.dispatches] }));
-        toast.success(
-          created.length > 1
-            ? `${created.length} pièces envoyées au pressing.`
-            : `Pièce envoyée au pressing (${created[0]?.numero_envoi}).`
-        );
-        return created;
+        set((state) => ({ dispatches: [...result.dispatches, ...state.dispatches] }));
+        if (result.skipped.length === 0) {
+          toast.success(
+            result.dispatches.length > 1
+              ? `${result.dispatches.length} pièces envoyées au pressing.`
+              : `Pièce envoyée au pressing (${result.dispatches[0]?.numero_envoi}).`
+          );
+        }
+        return result;
       } else {
-        const createdMock: PressingDispatch[] = input.variante_ids.map((vId, idx) => ({
-          id: `prs-${Date.now()}-${idx}`,
-          numero_envoi: `PRS-2026-${String(idx + 1).padStart(4, "0")}`,
-          variante_id: vId,
-          article_id: "art-mock",
-          article_name: "Costume Mock",
-          reference: "CST-01",
-          size: "50",
-          prestataire_id: input.prestataire_id || null,
-          prestataire_nom: input.prestataire_id ? "Prestataire Mock" : null,
-          location_id: input.location_id || null,
-          numero_location: null,
-          type_traitement: input.type_traitement || "nettoyage_sec",
-          motif: input.motif || "usage_normal",
-          cout_centimes: input.cout_centimes || 0,
-          statut_paiement_prestataire: "a_payer",
-          date_paiement_prestataire: null,
-          date_envoi: new Date().toISOString().split("T")[0],
-          date_retour_prevue: input.date_retour_prevue,
-          date_retour_effective: null,
-          statut: "envoye",
-          notes: input.notes || null,
-          utilisateur_id: currentUser?.id || "usr-001",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          has_photo: false,
-        }));
+        const activeDispatches = get().dispatches.filter(
+          (d) => d.statut === "envoye" || d.statut === "en_traitement"
+        );
+        const skipped: SkippedPressingItem[] = [];
+        const validVariantIds: string[] = [];
+
+        for (const vId of input.variante_ids) {
+          const existing = activeDispatches.find((d) => d.variante_id === vId);
+          if (existing) {
+            skipped.push({
+              variante_id: vId,
+              article_nom: existing.article_name || "Costume Mock",
+              numero_envoi_actif: existing.numero_envoi,
+              message: `La pièce '${existing.article_name || "Costume Mock"}' est déjà envoyée au pressing sous ${existing.numero_envoi}`,
+            });
+          } else {
+            validVariantIds.push(vId);
+          }
+        }
+
+        if (validVariantIds.length === 0 && skipped.length > 0) {
+          throw new Error(skipped[0].message);
+        }
+
+        const createdMock: PressingDispatch[] = validVariantIds.map((vId, idx) => {
+          const found = useStockStore
+            .getState()
+            .articles?.flatMap((a: any) =>
+              a.variants?.map((v: any) => ({
+                ...v,
+                artName: a.name || a.nom,
+                artRef: a.reference,
+              }))
+            )
+            ?.find((v: any) => v.id === vId);
+
+          const artName = found?.artName || "Costume Mock";
+          const ref = found?.artRef || "CST-01";
+          const size = found?.size || found?.taille || "50";
+
+          return {
+            id: `prs-${Date.now()}-${idx}`,
+            numero_envoi: `PRS-2026-${String(get().dispatches.length + idx + 1).padStart(4, "0")}`,
+            variante_id: vId,
+            article_id: found?.article_id || "art-mock",
+            article_name: artName,
+            reference: ref,
+            size,
+            prestataire_id: input.prestataire_id || null,
+            prestataire_nom: input.prestataire_id ? "Prestataire Mock" : null,
+            location_id: input.location_id || null,
+            numero_location: null,
+            type_traitement: input.type_traitement || "nettoyage_sec",
+            motif: input.motif || "usage_normal",
+            cout_centimes: input.cout_centimes || 0,
+            statut_paiement_prestataire: "a_payer",
+            date_paiement_prestataire: null,
+            date_envoi: new Date().toISOString().split("T")[0],
+            date_retour_prevue: input.date_retour_prevue,
+            date_retour_effective: null,
+            statut: "envoye",
+            notes: input.notes || null,
+            utilisateur_id: currentUser?.id || "usr-001",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            has_photo: false,
+          };
+        });
         set((state) => ({ dispatches: [...createdMock, ...state.dispatches] }));
-        return createdMock;
+        if (skipped.length === 0) {
+          toast.success(
+            createdMock.length > 1
+              ? `${createdMock.length} pièces envoyées au pressing.`
+              : `Pièce envoyée au pressing (${createdMock[0]?.numero_envoi}).`
+          );
+        }
+        return {
+          dispatches: createdMock,
+          skipped,
+        };
       }
     } catch (err: any) {
       console.error("Erreur création envoi pressing:", err);

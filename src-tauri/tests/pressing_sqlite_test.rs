@@ -83,9 +83,9 @@ async fn test_create_pressing_dispatch_simple_and_rented_rejection() {
         utilisateur_id: Some("usr-001".to_string()),
     };
 
-    let dispatches = execute_create_pressing_dispatch(&pool, dto).await.expect("Envoi pressing échoué");
-    assert_eq!(dispatches.len(), 1);
-    assert_eq!(dispatches[0].statut, "envoye");
+    let res = execute_create_pressing_dispatch(&pool, dto).await.expect("Envoi pressing échoué");
+    assert_eq!(res.dispatches.len(), 1);
+    assert_eq!(res.dispatches[0].statut, "envoye");
 
     // Vérifier que la variante est bien au_pressing
     let status: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-003'")
@@ -156,9 +156,9 @@ async fn test_create_pressing_dispatch_future_conflict_force() {
         utilisateur_id: Some("usr-001".to_string()),
     };
 
-    let dispatches = execute_create_pressing_dispatch(&pool, dto_forced).await.expect("Envoi forcé échoué");
-    assert_eq!(dispatches.len(), 1);
-    assert_eq!(dispatches[0].statut, "envoye");
+    let res = execute_create_pressing_dispatch(&pool, dto_forced).await.expect("Envoi forcé échoué");
+    assert_eq!(res.dispatches.len(), 1);
+    assert_eq!(res.dispatches[0].statut, "envoye");
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
@@ -231,8 +231,8 @@ async fn test_receive_pressing_dispatch_and_recompute_status() {
         utilisateur_id: Some("usr-001".to_string()),
     };
 
-    let dispatches = execute_create_pressing_dispatch(&pool, dto).await.unwrap();
-    let envoi_id = &dispatches[0].id;
+    let res = execute_create_pressing_dispatch(&pool, dto).await.unwrap();
+    let envoi_id = &res.dispatches[0].id;
 
     // Réception
     let updated = execute_receive_pressing_dispatch(&pool, envoi_id, Some("2026-10-18".to_string()), Some("Reçu en parfait état".to_string()))
@@ -274,8 +274,8 @@ async fn test_mark_pressing_problem_blocks_rental() {
         utilisateur_id: Some("usr-001".to_string()),
     };
 
-    let dispatches = execute_create_pressing_dispatch(&pool, dto).await.unwrap();
-    let envoi_id = &dispatches[0].id;
+    let res = execute_create_pressing_dispatch(&pool, dto).await.unwrap();
+    let envoi_id = &res.dispatches[0].id;
 
     // Signalement problème
     let updated = execute_mark_pressing_problem(&pool, envoi_id, Some("Brûlure au fer à repasser, tissu endommagé".to_string()))
@@ -411,8 +411,8 @@ async fn test_deactivate_provider_with_active_dispatches() {
         utilisateur_id: Some("usr-001".to_string()),
     };
 
-    let dispatches = execute_create_pressing_dispatch(&pool, dto).await.unwrap();
-    assert_eq!(dispatches.len(), 1);
+    let res = execute_create_pressing_dispatch(&pool, dto).await.unwrap();
+    assert_eq!(res.dispatches.len(), 1);
 
     // Désactiver le prestataire
     execute_set_pressing_provider_active(&pool, &prv.id, false)
@@ -423,7 +423,7 @@ async fn test_deactivate_provider_with_active_dispatches() {
     let check_dispatch: (String, Option<String>) = sqlx::query_as(
         "SELECT id, prestataire_id FROM pressing_envois WHERE id = ?"
     )
-    .bind(&dispatches[0].id)
+    .bind(&res.dispatches[0].id)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -455,6 +455,7 @@ async fn test_deactivate_provider_with_active_dispatches() {
 /// - Une variante déjà envoyée au pressing (statut envoye) est refusée avec le numéro de son envoi actif.
 /// - Un lot multi-pièces contenant une variante active et une disponible : la variante active est refusée
 ///   sans faire échouer le lot ; la variante disponible est envoyée avec succès.
+/// - Le résultat contient explicitement dispatches (pièces créées) et skipped (pièces ignorées avec leur numéro actif).
 #[tokio::test]
 async fn test_duplicate_dispatch_rejection_and_multi_variant_partial() {
     let test_dir = std::env::temp_dir().join(format!("test_dispatch_dup_{}", chrono::Utc::now().timestamp_micros()));
@@ -474,9 +475,10 @@ async fn test_duplicate_dispatch_rejection_and_multi_variant_partial() {
         force: false,
         utilisateur_id: Some("usr-001".to_string()),
     };
-    let dispatches = execute_create_pressing_dispatch(&pool, dto1).await.expect("Premier envoi échoué");
-    assert_eq!(dispatches.len(), 1);
-    let num_actif = dispatches[0].numero_envoi.clone();
+    let res1 = execute_create_pressing_dispatch(&pool, dto1).await.expect("Premier envoi échoué");
+    assert_eq!(res1.dispatches.len(), 1);
+    assert!(res1.skipped.is_empty(), "Aucune pièce ne doit être ignorée lors du premier envoi");
+    let num_actif = res1.dispatches[0].numero_envoi.clone();
 
     // 2. Second envoi pour var-003 seule -> doit être refusé avec le numéro actif
     let dto2 = CreatePressingDispatchDto {
@@ -519,11 +521,27 @@ async fn test_duplicate_dispatch_rejection_and_multi_variant_partial() {
         force: false,
         utilisateur_id: Some("usr-001".to_string()),
     };
-    let dispatches_mixte = execute_create_pressing_dispatch(&pool, dto_mixte)
+    let res_mixte = execute_create_pressing_dispatch(&pool, dto_mixte)
         .await
         .expect("Le lot mixte doit réussir pour la pièce disponible");
-    assert_eq!(dispatches_mixte.len(), 1, "Seule var-004 doit générer un envoi");
-    assert_eq!(dispatches_mixte[0].variante_id, "var-004");
+    assert_eq!(res_mixte.dispatches.len(), 1, "Seule var-004 doit générer un envoi");
+    assert_eq!(res_mixte.dispatches[0].variante_id, "var-004");
+
+    // Remontée explicite des pièces ignorées (F1)
+    assert_eq!(res_mixte.skipped.len(), 1, "var-003 doit être explicitement listée dans les pièces ignorées");
+    assert_eq!(res_mixte.skipped[0].variante_id, "var-003");
+    assert_eq!(res_mixte.skipped[0].numero_envoi_actif, num_actif);
+    assert!(
+        res_mixte.skipped[0].message.contains("déjà envoyée au pressing sous"),
+        "Le message doit expliquer le refus : {}",
+        res_mixte.skipped[0].message
+    );
+    assert!(
+        res_mixte.skipped[0].message.contains(&num_actif),
+        "Le message doit citer le numéro d'envoi actif {}: {}",
+        num_actif,
+        res_mixte.skipped[0].message
+    );
 
     // Vérifier que var-004 est passée au statut au_pressing
     let st4: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-004'")
@@ -560,13 +578,13 @@ async fn test_dispatch_allowed_after_received_cancelled_or_problem() {
 
     // --- Cas 1 : Envoi terminé par réception (recu) ---
     let d1 = execute_create_pressing_dispatch(&pool, create_dto("var-006")).await.unwrap();
-    execute_receive_pressing_dispatch(&pool, &d1[0].id, None, None).await.unwrap();
+    execute_receive_pressing_dispatch(&pool, &d1.dispatches[0].id, None, None).await.unwrap();
     // Le nouvel envoi pour var-006 doit être accepté
     let d1_bis = execute_create_pressing_dispatch(&pool, create_dto("var-006")).await;
     assert!(d1_bis.is_ok(), "Un envoi recu ne doit pas bloquer un nouvel envoi");
 
     // --- Cas 2 : Envoi annulé (annule) ---
-    let d1_bis_id = d1_bis.unwrap()[0].id.clone();
+    let d1_bis_id = d1_bis.unwrap().dispatches[0].id.clone();
     execute_cancel_pressing_dispatch(&pool, &d1_bis_id).await.unwrap();
     // Le statut est annule -> un nouvel envoi pour var-006 doit être accepté
     let d1_ter = execute_create_pressing_dispatch(&pool, create_dto("var-006")).await;
@@ -574,13 +592,13 @@ async fn test_dispatch_allowed_after_received_cancelled_or_problem() {
 
     // --- Cas 3 : Envoi en problème (probleme) ---
     let d2 = execute_create_pressing_dispatch(&pool, create_dto("var-012")).await.unwrap();
-    execute_mark_pressing_problem(&pool, &d2[0].id, Some("Tache tenace".to_string())).await.unwrap();
+    execute_mark_pressing_problem(&pool, &d2.dispatches[0].id, Some("Tache tenace".to_string())).await.unwrap();
     // Le statut est probleme -> un nouvel envoi pressing doit être possible (par ex. pour pressing spécialisé)
     let d2_bis = execute_create_pressing_dispatch(&pool, create_dto("var-012")).await;
     assert!(d2_bis.is_ok(), "Un envoi en probleme ne doit pas bloquer un nouvel envoi pressing");
 
     // --- Cas 4 : Statut en_traitement -> DOIT BLOQUER ---
-    let d2_bis_id = d2_bis.unwrap()[0].id.clone();
+    let d2_bis_id = d2_bis.unwrap().dispatches[0].id.clone();
     let num_en_traitement: (String,) = sqlx::query_as("SELECT numero_envoi FROM pressing_envois WHERE id = ?")
         .bind(&d2_bis_id)
         .fetch_one(&pool)
@@ -664,8 +682,8 @@ async fn test_concurrent_create_pressing_dispatch_race_condition() {
         (Err(e1), Err(e2)) => panic!("Les deux envois ont échoué : e1={:?}, e2={:?}", e1, e2),
     };
 
-    assert_eq!(ok_res.len(), 1);
-    let created_number = &ok_res[0].numero_envoi;
+    assert_eq!(ok_res.dispatches.len(), 1);
+    let created_number = &ok_res.dispatches[0].numero_envoi;
 
     let err_msg = err_res.to_string();
     assert!(

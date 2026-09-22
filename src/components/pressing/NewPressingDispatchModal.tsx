@@ -10,9 +10,13 @@ import {
   Calendar,
   Send,
   Layers,
+  CheckCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { CreatePressingDispatchInput } from "@/types/pressing";
+import type {
+  CreatePressingDispatchInput,
+  CreatePressingDispatchResult,
+} from "@/types/pressing";
 
 interface Props {
   isOpen: boolean;
@@ -43,11 +47,14 @@ export const NewPressingDispatchModal: React.FC<Props> = ({
   const [notes, setNotes] = useState<string>("");
   const [force, setForce] = useState<boolean>(false);
   const [conflictWarning, setConflictWarning] = useState<string | null>(null);
+  const [dispatchResult, setDispatchResult] = useState<CreatePressingDispatchResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   useEffect(() => {
     if (isOpen) {
       loadProviders(true);
+      setDispatchResult(null);
+      setConflictWarning(null);
 
       if (initialVariantIds.length > 0) {
         setSelectedVariantIds(initialVariantIds);
@@ -116,9 +123,23 @@ export const NewPressingDispatchModal: React.FC<Props> = ({
         notes: notes.trim() || undefined,
       };
 
-      await createDispatch(input);
-      onSuccess?.();
-      onClose();
+      const result = await createDispatch(input);
+      if (result.skipped && result.skipped.length > 0) {
+        setDispatchResult(result);
+        toast.success(
+          result.dispatches.length > 1
+            ? `${result.dispatches.length} pièces envoyées au pressing.`
+            : `1 pièce envoyée au pressing (${result.dispatches[0]?.numero_envoi}).`
+        );
+        toast.warning(
+          `${result.skipped.length} pièce(s) ignorée(s) : déjà au pressing.`,
+          { duration: 8000 }
+        );
+        onSuccess?.();
+      } else {
+        onSuccess?.();
+        onClose();
+      }
     } catch (err: any) {
       const msg = err.message || String(err);
       if (msg.includes("Conflit de date") || msg.includes("réservée pour le contrat")) {
@@ -173,7 +194,87 @@ export const NewPressingDispatchModal: React.FC<Props> = ({
         </div>
 
         {/* Corps */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
+        {dispatchResult ? (
+          <div className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
+            <div className="flex items-center gap-2 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 font-medium">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>
+                Envoi partiel effectué : les pièces disponibles ont été envoyées, mais les pièces déjà actives au pressing ont été ignorées pour éviter les doublons.
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Colonne 1 : Confirmation pièces envoyées */}
+              <div
+                data-testid="dispatched-items-section"
+                className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 space-y-3"
+              >
+                <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-semibold text-xs border-b border-emerald-500/20 pb-2">
+                  <CheckCircle className="w-4 h-4" />
+                  <span>{dispatchResult.dispatches.length} pièce(s) envoyée(s)</span>
+                </div>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {dispatchResult.dispatches.map((d) => (
+                    <div
+                      key={d.id}
+                      className="p-2.5 rounded-lg bg-card border border-border text-foreground text-xs space-y-0.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold">{d.article_name}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-mono font-medium">
+                          {d.numero_envoi}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        Taille : {d.size} | Réf : {d.reference}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Colonne 2 : Alerte distincte pièces ignorées */}
+              <div
+                data-testid="skipped-items-section"
+                className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-3"
+              >
+                <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-semibold text-xs border-b border-amber-500/20 pb-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>{dispatchResult.skipped.length} pièce(s) ignorée(s)</span>
+                </div>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {dispatchResult.skipped.map((s) => (
+                    <div
+                      key={s.variante_id}
+                      className="p-2.5 rounded-lg bg-card border border-border text-foreground text-xs space-y-1"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold">{s.article_nom}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-mono font-medium">
+                          {s.numero_envoi_actif}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-amber-700 dark:text-amber-300">
+                        {s.message}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end pt-3 border-t border-border">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-5 py-2 rounded-lg bg-foreground text-background text-xs font-semibold hover:bg-foreground/90 transition-colors"
+              >
+                Terminer et Fermer
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
           {/* Sélection des pièces */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -371,7 +472,8 @@ export const NewPressingDispatchModal: React.FC<Props> = ({
             </button>
           </div>
         </form>
-      </div>
+      )}
     </div>
-  );
+  </div>
+);
 };
