@@ -12,13 +12,15 @@ import {
   FileSpreadsheet,
   RotateCcw,
   Lock,
+  Sparkles,
 } from "lucide-react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useAuthStore } from "@/store/authStore";
 import { restartApplication, setRestorationInProgress } from "@/services/tauri";
 import { toast } from "sonner";
+import { PressingProvidersSettings } from "@/components/settings/PressingProvidersSettings";
 
-type SettingsTab = "etablissement" | "numerotation" | "sauvegardes" | "audit";
+type SettingsTab = "etablissement" | "numerotation" | "sauvegardes" | "audit" | "pressing";
 
 export const ParametresPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<SettingsTab>("etablissement");
@@ -222,6 +224,19 @@ export const ParametresPage: React.FC = () => {
           >
             <ShieldCheck className="w-3.5 h-3.5" />
             <span>Journal d'audit</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("pressing")}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+              activeTab === "pressing"
+                ? "bg-background text-foreground shadow-sm font-semibold"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Pressing &amp; Atelier</span>
           </button>
         </div>
       </div>
@@ -840,6 +855,18 @@ export const ParametresPage: React.FC = () => {
                 </tbody>
               </table>
             </div>
+          </motion.div>
+        )}
+
+        {/* ONGLET 5 : PRESSING & ATELIER */}
+        {activeTab === "pressing" && (
+          <motion.div
+            key="pressing"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+          >
+            <PressingProvidersSettings />
           </motion.div>
         )}
       </AnimatePresence>

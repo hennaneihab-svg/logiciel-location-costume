@@ -11,6 +11,7 @@ import { RapportsPage } from "./pages/RapportsPage";
 import { AlertesPage } from "./pages/AlertesPage";
 import { ParametresPage } from "./pages/ParametresPage";
 import { LoginPage } from "./pages/LoginPage";
+import { PressingPage } from "./components/pressing/PressingPage";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 import { useAlertEngine } from "./hooks/useAlertEngine";
 import { useAppInit } from "./hooks/useAppInit";
@@ -80,6 +81,7 @@ export const App: React.FC = () => {
           <Route path="clients" element={<ClientsPage />} />
           <Route path="locations" element={<LocationsPage />} />
           <Route path="caisse" element={<CaissePage />} />
+          <Route path="pressing" element={<PressingPage />} />
           <Route path="rapports" element={<RapportsPage />} />
           <Route path="alertes" element={<AlertesPage />} />
 

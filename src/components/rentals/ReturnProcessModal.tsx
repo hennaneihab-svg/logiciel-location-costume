@@ -6,10 +6,12 @@ import {
   AlertTriangle,
   ShieldCheck,
   ShieldAlert,
+  Sparkles,
 } from "lucide-react";
 import { formatCents, eurosToCents } from "@/lib/utils";
 import { useRentalStore } from "@/store/rentalStore";
 import { toast } from "sonner";
+import { NewPressingDispatchModal } from "@/components/pressing/NewPressingDispatchModal";
 
 export const ReturnProcessModal: React.FC = () => {
   const {
@@ -18,6 +20,11 @@ export const ReturnProcessModal: React.FC = () => {
     setReturnModalOpen,
     processReturn,
   } = useRentalStore();
+
+  const [pressingTarget, setPressingTarget] = useState<{
+    variantId: string;
+    motif: string;
+  } | null>(null);
 
   const [itemsConditions, setItemsConditions] = useState<
     Record<
@@ -312,6 +319,28 @@ export const ReturnProcessModal: React.FC = () => {
                       </div>
                     </div>
                   )}
+
+                  {/* Suggestion d'envoi direct au pressing si l'article nécessite nettoyage ou réparation */}
+                  {condState.condition !== "bon_etat" && (
+                    <div className="flex items-center justify-between pt-1 border-t border-border/40">
+                      <span className="text-[11px] text-muted-foreground">
+                        {condState.condition === "endommage" ? "Réparation requise" : "Nettoyage nécessaire"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPressingTarget({
+                            variantId: item.variant_id,
+                            motif: condState.condition === "endommage" ? "reparation_legere" : "usage_normal",
+                          })
+                        }
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-sky-500/10 hover:bg-sky-500/20 text-sky-600 text-[11px] font-medium transition-colors"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        <span>Envoyer directement au pressing</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -367,6 +396,17 @@ export const ReturnProcessModal: React.FC = () => {
           </div>
         </form>
       </div>
+
+      {pressingTarget && (
+        <NewPressingDispatchModal
+          isOpen={true}
+          onClose={() => setPressingTarget(null)}
+          initialVariantIds={[pressingTarget.variantId]}
+          initialLocationId={contract.id}
+          initialMotif={pressingTarget.motif}
+          onSuccess={() => setPressingTarget(null)}
+        />
+      )}
     </div>
   );
 };

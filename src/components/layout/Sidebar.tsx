@@ -12,10 +12,12 @@ import {
   ChevronRight,
   Lock,
   UserCheck,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAlertStore } from "@/store/alertStore";
 import { useAuthStore } from "@/store/authStore";
+import { usePressingStore } from "@/store/pressingStore";
 
 interface NavItem {
   name: string;
@@ -34,20 +36,31 @@ interface NavSection {
 export const Sidebar: React.FC = () => {
   const activeCount = useAlertStore((s) => s.getActiveCount());
   const criticalCount = useAlertStore((s) => s.getCriticalCount());
+  const isPressingActive = usePressingStore((s) => s.isModuleActive);
 
   const { currentUser, switchUserRole } = useAuthStore();
   const isAdmin = currentUser?.role === "admin";
 
+  const exploitationItems: NavItem[] = [
+    { name: "Tableau de bord", path: "/", icon: LayoutDashboard },
+    { name: "Inventaire & Stock", path: "/stock", icon: Shirt },
+    { name: "Répertoire Clients", path: "/clients", icon: Users },
+    { name: "Contrats & Locations", path: "/locations", icon: CalendarDays },
+    { name: "Caisse & Vente", path: "/caisse", icon: CreditCard },
+  ];
+
+  if (isPressingActive) {
+    exploitationItems.push({
+      name: "Pressing & Atelier",
+      path: "/pressing",
+      icon: Sparkles,
+    });
+  }
+
   const NAV_SECTIONS: NavSection[] = [
     {
       title: "Exploitation",
-      items: [
-        { name: "Tableau de bord", path: "/", icon: LayoutDashboard },
-        { name: "Inventaire & Stock", path: "/stock", icon: Shirt },
-        { name: "Répertoire Clients", path: "/clients", icon: Users },
-        { name: "Contrats & Locations", path: "/locations", icon: CalendarDays },
-        { name: "Caisse & Vente", path: "/caisse", icon: CreditCard },
-      ],
+      items: exploitationItems,
     },
     {
       title: "Pilotage & Contrôle",

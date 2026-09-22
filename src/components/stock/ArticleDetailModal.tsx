@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   X,
   DollarSign,
@@ -10,9 +10,12 @@ import {
   CheckCircle2,
   ArrowDownLeft,
   ArrowUpRight,
+  Sparkles,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { useStockStore } from "@/store/stockStore";
+import { usePressingStore } from "@/store/pressingStore";
+import { NewPressingDispatchModal } from "@/components/pressing/NewPressingDispatchModal";
 import { getStatusConfig } from "./StockCard";
 import type { StockVariant } from "@/types/stock";
 import { toast } from "sonner";
@@ -35,6 +38,29 @@ export const ArticleDetailModal: React.FC = () => {
   const [targetVariant, setTargetVariant] = useState<StockVariant | null>(null);
   const [newStatus, setNewStatus] = useState<StockVariant["status"]>("au_pressing");
   const [statusComment, setStatusComment] = useState("");
+
+  // État pressing
+  const isPressingActive = usePressingStore((s) => s.isModuleActive);
+  const getVariantHistory = usePressingStore((s) => s.getVariantHistory);
+  const [pressingVariantId, setPressingVariantId] = useState<string | null>(null);
+  const [pressingHistory, setPressingHistory] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (selectedArticle && isPressingActive) {
+      // Charger les envois pressing pour toutes les variantes de cet article
+      const loadHistory = async () => {
+        const allHist: any[] = [];
+        for (const v of selectedArticle.variants) {
+          const h = await getVariantHistory(v.id);
+          if (h && h.length > 0) {
+            allHist.push(...h);
+          }
+        }
+        setPressingHistory(allHist);
+      };
+      loadHistory();
+    }
+  }, [selectedArticle, isPressingActive, getVariantHistory]);
 
   if (!isDetailModalOpen || !selectedArticle) return null;
 
@@ -306,13 +332,26 @@ export const ArticleDetailModal: React.FC = () => {
                           {v.times_rented} fois
                         </td>
                         <td className="py-2.5 px-4 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenStatusChange(v)}
-                            className="text-xs font-semibold text-primary hover:underline"
-                          >
-                            Changer statut
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            {isPressingActive && (
+                              <button
+                                type="button"
+                                onClick={() => setPressingVariantId(v.id)}
+                                className="flex items-center gap-1 text-[11px] font-semibold text-sky-600 hover:text-sky-700 hover:underline"
+                                title="Envoyer cette pièce au pressing"
+                              >
+                                <Sparkles className="w-3 h-3" />
+                                <span>Pressing</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenStatusChange(v)}
+                              className="text-xs font-semibold text-primary hover:underline"
+                            >
+                              Changer statut
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -373,6 +412,58 @@ export const ArticleDetailModal: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Section 4 : Historique des Envois Pressing / Atelier */}
+          {isPressingActive && (
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-sky-600 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" />
+                Historique du Pressing &amp; Entretien de ce Modèle
+              </h4>
+
+              {pressingHistory.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic p-4 rounded-lg bg-secondary/30 text-center">
+                  Aucun passage au pressing enregistré pour l'instant.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {pressingHistory.map((ph) => (
+                    <div
+                      key={ph.id}
+                      className="p-3 rounded-xl bg-secondary/30 border border-border flex items-center justify-between text-xs"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-sky-600">
+                            {ph.numero_envoi}
+                          </span>
+                          <span className="font-semibold text-foreground">
+                            {ph.prestataire_nom || "Atelier interne"}
+                          </span>
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-muted font-mono">
+                            T.{ph.size}
+                          </span>
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-sky-500/10 text-sky-600 font-medium">
+                            {ph.statut}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          Envoi : {ph.date_envoi} • Prévu : {ph.date_retour_prevue}
+                          {ph.date_retour_effective && ` • Reçu le : ${ph.date_retour_effective}`}
+                          {ph.notes && ` • ${ph.notes}`}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-bold text-foreground">
+                          {formatCents(ph.cout_centimes)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Modal Footer */}
@@ -385,6 +476,16 @@ export const ArticleDetailModal: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* MODAL NOUVEL ENVOI PRESSING SUR CETTE VARIANTE */}
+      {pressingVariantId && (
+        <NewPressingDispatchModal
+          isOpen={true}
+          onClose={() => setPressingVariantId(null)}
+          initialVariantIds={[pressingVariantId]}
+          onSuccess={() => setPressingVariantId(null)}
+        />
+      )}
 
       {/* SOUS-MODAL : Changement de Statut avec Commentaire OBLIGATOIRE */}
       {isStatusDialogOpen && targetVariant && (
