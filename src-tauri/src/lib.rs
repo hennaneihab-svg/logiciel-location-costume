@@ -75,6 +75,24 @@ pub fn run() {
             commands::get_article_photo_thumb,
             commands::get_article_photo_full,
             commands::delete_article_photo,
+            // Pressing
+            commands::create_pressing_provider,
+            commands::update_pressing_provider,
+            commands::deactivate_pressing_provider,
+            commands::reactivate_pressing_provider,
+            commands::list_pressing_providers,
+            commands::create_pressing_dispatch,
+            commands::receive_pressing_dispatch,
+            commands::mark_pressing_problem,
+            commands::cancel_pressing_dispatch,
+            commands::pay_pressing_provider,
+            commands::list_pressing_dispatches,
+            commands::get_pressing_history_for_variant,
+            commands::set_pressing_photo,
+            commands::get_pressing_photo_thumb,
+            commands::get_pressing_photo_full,
+            commands::get_pressing_module_active,
+            commands::set_pressing_module_active,
         ])
         .run(tauri::generate_context!())
         .expect("Erreur fatale lors du lancement de l'application Tauri");
