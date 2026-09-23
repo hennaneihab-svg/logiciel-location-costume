@@ -63,6 +63,9 @@ jobs:
       - name: Run Pressing SQLite Tests (Rust)
         run: cargo test --manifest-path src-tauri/Cargo.toml --test pressing_sqlite_test -- --nocapture
 
+      - name: Run Settings & Import SQLite Tests (Rust)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test settings_and_import_sqlite_test -- --nocapture
+
       - name: Build Tauri Binary & Bundle
         run: npm run tauri build
 
