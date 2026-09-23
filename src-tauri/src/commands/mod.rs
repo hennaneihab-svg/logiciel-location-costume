@@ -9,6 +9,9 @@ pub use pressing::*;
 pub mod settings;
 pub use settings::*;
 
+pub mod matrix;
+pub use matrix::*;
+
 // ============================================================================
 // COMMANDES IPC CRUD AVEC VALIDATION RUST
 // ============================================================================

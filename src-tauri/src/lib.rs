@@ -98,6 +98,9 @@ pub fn run() {
             commands::set_setting,
             commands::get_all_settings,
             commands::import_legacy_localstorage,
+            // Matrice de disponibilité
+            commands::get_availability_matrix,
+            commands::check_availability_slot,
         ])
         .run(tauri::generate_context!())
         .expect("Erreur fatale lors du lancement de l'application Tauri");
