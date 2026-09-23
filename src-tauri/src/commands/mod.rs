@@ -3761,7 +3761,7 @@ pub async fn execute_get_financial_transactions_report(
     let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, Option<String>, Option<String>, String, i64, String, Option<String>)>(
         "SELECT 
             p.id,
-            l.numero_contrat,
+            l.numero_location,
             v.numero_vente,
             p.type_paiement,
             c.nom_complet AS client_location_nom,

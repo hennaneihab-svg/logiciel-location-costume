@@ -19,7 +19,7 @@ async fn test_rapports_overview_calculations_and_period_filtering() {
     let loc_id_2 = "loc-test-rap-2";
 
     sqlx::query(
-        "INSERT INTO locations (id, numero_contrat, client_id, utilisateur_id, statut,
+        "INSERT INTO locations (id, numero_location, client_id, utilisateur_id, statut,
                                 date_retrait_prevue, date_retour_prevue, montant_total_ht_centimes,
                                 tva_taux, montant_total_ttc_centimes, frais_nettoyage_centimes,
                                 frais_retard_centimes, frais_degradation_centimes, remise_centimes,
@@ -37,7 +37,7 @@ async fn test_rapports_overview_calculations_and_period_filtering() {
     .expect("Failed to insert loc 1");
 
     sqlx::query(
-        "INSERT INTO locations (id, numero_contrat, client_id, utilisateur_id, statut,
+        "INSERT INTO locations (id, numero_location, client_id, utilisateur_id, statut,
                                 date_retrait_prevue, date_retour_prevue, montant_total_ht_centimes,
                                 tva_taux, montant_total_ttc_centimes, frais_nettoyage_centimes,
                                 frais_retard_centimes, frais_degradation_centimes, remise_centimes,
@@ -57,7 +57,7 @@ async fn test_rapports_overview_calculations_and_period_filtering() {
     // Contrat ancien (hors période) : 70 000 DA
     let loc_id_old = "loc-test-rap-old";
     sqlx::query(
-        "INSERT INTO locations (id, numero_contrat, client_id, utilisateur_id, statut,
+        "INSERT INTO locations (id, numero_location, client_id, utilisateur_id, statut,
                                 date_retrait_prevue, date_retour_prevue, montant_total_ht_centimes,
                                 tva_taux, montant_total_ttc_centimes, frais_nettoyage_centimes,
                                 frais_retard_centimes, frais_degradation_centimes, remise_centimes,
