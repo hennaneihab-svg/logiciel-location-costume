@@ -227,3 +227,132 @@ async fn test_validate_variant_availability_rules() {
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+/// C4. Test Rust sur reschedule_rental_line :
+/// Vérifie que la commande refuse et n'écrit rien si la plage cible est en conflit
+/// au moment de l'écriture (simulation de course concurrente entre l'ouverture de la modal et la confirmation).
+#[tokio::test]
+async fn test_reschedule_rental_line_atomic_rollback_on_concurrent_conflict() {
+    use costume_rental_lib::commands::matrix::{
+        reschedule_rental_line_internal, RescheduleRentalLineDto,
+    };
+
+    let test_dir = std::env::temp_dir().join(format!("test_matrix_resched_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // 1. Créer une location initiale : loc-res-01 sur var-001 (Smoking Col Châle Noir 48) du 2026-11-01 au 2026-11-05
+    sqlx::query(
+        "INSERT INTO locations (
+            id, numero_location, client_id, utilisateur_id, statut,
+            date_retrait_prevue, date_retour_prevue, montant_total_ttc_centimes, montant_caution_centimes,
+            statut_caution, created_at, updated_at
+        ) VALUES ('loc-res-01', 'LOC-2026-R01', 'cli-001', 'usr-001', 'reserve', '2026-11-01', '2026-11-05', 18000, 45000, 'non_recue', ?, ?)"
+    )
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Insert initial location");
+
+    sqlx::query(
+        "INSERT INTO lignes_location (id, location_id, variante_id, type_ligne, prix_unitaire_centimes, caution_centimes, etat_depart, est_rendu)
+         VALUES ('lig-res-01', 'loc-res-01', 'var-001', 'location', 18000, 45000, 'excellent', 0)"
+    )
+    .execute(&pool)
+    .await
+    .expect("Insert initial ligne location");
+
+    // 2. Vérification initiale : var-004 (Smoking Midnight Blue 50) est libre du 2026-11-15 au 2026-11-19
+    let initial_val = validate_variant_availability(&pool, "var-004", "2026-11-15", "2026-11-19", Some("loc-res-01"))
+        .await
+        .expect("Validation initiale ok");
+    assert!(initial_val.disponible, "La plage cible est initialement libre");
+
+    // 3. SIMULATION DE COURSE CONCURRENTE :
+    // Entre le moment où l'opérateur a vu la case libre et le clic sur 'Confirmer',
+    // un collègue valide une location loc-concurrent-02 sur var-004 du 2026-11-16 au 2026-11-20
+    sqlx::query(
+        "INSERT INTO locations (
+            id, numero_location, client_id, utilisateur_id, statut,
+            date_retrait_prevue, date_retour_prevue, montant_total_ttc_centimes, montant_caution_centimes,
+            statut_caution, created_at, updated_at
+        ) VALUES ('loc-conc-02', 'LOC-2026-CONC2', 'cli-002', 'usr-001', 'reserve', '2026-11-16', '2026-11-20', 19000, 50000, 'non_recue', ?, ?)"
+    )
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Insert concurrent location");
+
+    sqlx::query(
+        "INSERT INTO lignes_location (id, location_id, variante_id, type_ligne, prix_unitaire_centimes, caution_centimes, etat_depart, est_rendu)
+         VALUES ('lig-conc-02', 'loc-conc-02', 'var-004', 'location', 19000, 50000, 'excellent', 0)"
+    )
+    .execute(&pool)
+    .await
+    .expect("Insert concurrent ligne");
+
+    // 4. Tentative de reprogrammation : doit ÉCHOUER et ne RIEN ÉCRIRE
+    let dto_conflict = RescheduleRentalLineDto {
+        location_id: "loc-res-01".to_string(),
+        current_variant_id: "var-001".to_string(),
+        target_variant_id: "var-004".to_string(),
+        new_pickup_date: "2026-11-15".to_string(),
+        new_return_date: "2026-11-19".to_string(),
+    };
+
+    let result_conflict = reschedule_rental_line_internal(&pool, &dto_conflict).await;
+    assert!(result_conflict.is_err(), "La reprogrammation DOIT être rejetée en cas de collision concurrente");
+    let err_msg = result_conflict.unwrap_err().to_string();
+    assert!(err_msg.contains("conflit de disponibilité"), "L'erreur doit expliciter le conflit : {}", err_msg);
+
+    // 5. VÉRIFICATION DE NON-MODIFICATION (ROLLBACK / ATOMICITÉ) :
+    // La location loc-res-01 doit toujours être sur les dates 2026-11-01 .. 2026-11-05
+    let loc_check: (String, String) = sqlx::query_as(
+        "SELECT date_retrait_prevue, date_retour_prevue FROM locations WHERE id = 'loc-res-01'"
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("Fetch location");
+
+    assert_eq!(loc_check.0, "2026-11-01", "La date de retrait n'a pas été altérée");
+    assert_eq!(loc_check.1, "2026-11-05", "La date de retour n'a pas été altérée");
+
+    let lig_check: String = sqlx::query_scalar(
+        "SELECT variante_id FROM lignes_location WHERE id = 'lig-res-01'"
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("Fetch ligne");
+    assert_eq!(lig_check, "var-001", "La variante n'a pas été modifiée après échec");
+
+    // 6. CAS NOMINAL : Reprogrammation sans conflit sur une plage totalement libre (2026-11-25 .. 2026-11-28)
+    let dto_success = RescheduleRentalLineDto {
+        location_id: "loc-res-01".to_string(),
+        current_variant_id: "var-001".to_string(),
+        target_variant_id: "var-001".to_string(),
+        new_pickup_date: "2026-11-25".to_string(),
+        new_return_date: "2026-11-28".to_string(),
+    };
+
+    let result_success = reschedule_rental_line_internal(&pool, &dto_success).await;
+    assert!(result_success.is_ok(), "La reprogrammation valide doit réussir");
+
+    // Vérifier les nouvelles dates en base
+    let loc_updated: (String, String) = sqlx::query_as(
+        "SELECT date_retrait_prevue, date_retour_prevue FROM locations WHERE id = 'loc-res-01'"
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("Fetch location updated");
+
+    assert_eq!(loc_updated.0, "2026-11-25", "La date de retrait a été mise à jour");
+    assert_eq!(loc_updated.1, "2026-11-28", "La date de retour a été mise à jour");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+

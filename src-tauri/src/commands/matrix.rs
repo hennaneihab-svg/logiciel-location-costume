@@ -604,3 +604,147 @@ pub async fn check_availability_slot(
     )
     .await
 }
+
+// ============================================================================
+// C3. ÉCRITURE EN BASE AVEC TRANSACTION ET REVALIDATION STRICTE
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RescheduleRentalLineDto {
+    pub location_id: String,
+    pub current_variant_id: String,
+    pub target_variant_id: String,
+    pub new_pickup_date: String,
+    pub new_return_date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RescheduleRentalResult {
+    pub success: bool,
+    pub location_id: String,
+    pub numero_location: String,
+    pub current_variant_id: String,
+    pub target_variant_id: String,
+    pub new_pickup_date: String,
+    pub new_return_date: String,
+    pub message: String,
+}
+
+pub async fn reschedule_rental_line_internal(
+    pool: &SqlitePool,
+    dto: &RescheduleRentalLineDto,
+) -> Result<RescheduleRentalResult, AppError> {
+    // 1. Transaction atomique stricte
+    let mut tx = pool.begin().await.map_err(map_sqlite_err)?;
+
+    // 2. Vérifier que la location existe et est modifiable
+    let loc_row = sqlx::query(
+        "SELECT id, numero_location, statut, date_retrait_prevue, date_retour_prevue
+         FROM locations
+         WHERE id = ?"
+    )
+    .bind(&dto.location_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(map_sqlite_err)?
+    .ok_or_else(|| AppError::NotFound(format!("Contrat de location introuvable : {}", dto.location_id)))?;
+
+    let num_loc: String = loc_row.get("numero_location");
+    let statut: String = loc_row.get("statut");
+
+    if statut == "retourne" || statut == "annule" {
+        return Err(AppError::Validation(format!(
+            "Impossible de reprogrammer une location avec le statut '{}'. Seules les réservations et locations actives peuvent être déplacées.",
+            statut
+        )));
+    }
+
+    // 3. Vérifier que la ligne de contrat actuelle existe
+    let ligne_row = sqlx::query(
+        "SELECT id FROM lignes_location WHERE location_id = ? AND variante_id = ? AND est_rendu = 0"
+    )
+    .bind(&dto.location_id)
+    .bind(&dto.current_variant_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(map_sqlite_err)?
+    .ok_or_else(|| AppError::NotFound(format!(
+        "Ligne de location active introuvable pour la variante {} dans le contrat {}.",
+        dto.current_variant_id, num_loc
+    )))?;
+
+    let ligne_id: String = ligne_row.get("id");
+
+    // 4. Revalidation stricte de disponibilité côté serveur avant écriture
+    // Vérification de la disponibilité de la variante cible sur la nouvelle plage
+    let validation = validate_variant_availability(
+        pool,
+        &dto.target_variant_id,
+        &dto.new_pickup_date,
+        &dto.new_return_date,
+        Some(&dto.location_id),
+    )
+    .await?;
+
+    if !validation.disponible {
+        // En cas d'échec de la validation serveur (course concurrente), tx est abandonné
+        let motif = validation.motif_refus.unwrap_or_else(|| "Plage cible indisponible".to_string());
+        return Err(AppError::Validation(format!(
+            "Reprogrammation impossible : conflit de disponibilité détecté sur la pièce cible ({})",
+            motif
+        )));
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // 5. Mise à jour de la variante si changement vertical (autre pièce)
+    if dto.current_variant_id != dto.target_variant_id {
+        sqlx::query(
+            "UPDATE lignes_location SET variante_id = ? WHERE id = ?"
+        )
+        .bind(&dto.target_variant_id)
+        .bind(&ligne_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        // Recompute statut pour l'ancienne et la nouvelle variante
+        crate::commands::recompute_variant_status(&mut tx, &dto.current_variant_id).await?;
+        crate::commands::recompute_variant_status(&mut tx, &dto.target_variant_id).await?;
+    }
+
+    // 6. Mise à jour des dates du contrat
+    sqlx::query(
+        "UPDATE locations SET date_retrait_prevue = ?, date_retour_prevue = ?, updated_at = ? WHERE id = ?"
+    )
+    .bind(&dto.new_pickup_date)
+    .bind(&dto.new_return_date)
+    .bind(&now)
+    .bind(&dto.location_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(map_sqlite_err)?;
+
+    // 7. Commit atomique
+    tx.commit().await.map_err(map_sqlite_err)?;
+
+    Ok(RescheduleRentalResult {
+        success: true,
+        location_id: dto.location_id.clone(),
+        numero_location: num_loc,
+        current_variant_id: dto.current_variant_id.clone(),
+        target_variant_id: dto.target_variant_id.clone(),
+        new_pickup_date: dto.new_pickup_date.clone(),
+        new_return_date: dto.new_return_date.clone(),
+        message: "Reprogrammation de la location effectuée avec succès".to_string(),
+    })
+}
+
+#[command]
+pub async fn reschedule_rental_line(
+    dto: RescheduleRentalLineDto,
+    state: State<'_, DbState>,
+) -> Result<RescheduleRentalResult, AppError> {
+    reschedule_rental_line_internal(&state.pool, &dto).await
+}
+

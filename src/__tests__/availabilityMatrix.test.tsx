@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { toast } from "sonner";
 import { AvailabilityMatrix } from "@/components/matrix/AvailabilityMatrix";
 import { useMatrixStore } from "@/store/matrixStore";
 import { useRentalStore } from "@/store/rentalStore";
@@ -235,6 +236,74 @@ describe("LOT MATRICE PARTIE B — AvailabilityMatrix Frontend & Store Tests", (
     await waitFor(() => {
       expect(screen.queryByText("Smoking Col Châle Soie Noir")).toBeNull();
       expect(screen.getByText("Costume 3P Prince de Galles")).toBeTruthy();
+    });
+  });
+
+  it("C4.1 : drag-and-drop vers une plage libre -> modale de confirmation -> validation -> mise à jour visuelle après succès", async () => {
+    const toastSuccessSpy = vi.spyOn(toast, "success");
+    const rescheduleSpy = vi.spyOn(useMatrixStore.getState(), "rescheduleRental").mockResolvedValue({
+      success: true,
+      location_id: "LOC-2026-0001",
+      numero_location: "LOC-2026-0001",
+      current_variant_id: "var-001",
+      target_variant_id: "var-001",
+      new_pickup_date: "2026-09-26",
+      new_return_date: "2026-09-30",
+      message: "Reprogrammation réussie",
+    });
+
+    render(<AvailabilityMatrix />);
+
+    const locationSlot = screen.getAllByTestId("slot-location")[0];
+    const targetCell = screen.getByTestId("cell-var-001-2026-09-26");
+
+    // Simuler le drag and drop vers la case libre 2026-09-26
+    fireEvent.dragStart(locationSlot);
+    fireEvent.dragOver(targetCell);
+    fireEvent.drop(targetCell);
+
+    // La modale de confirmation doit s'ouvrir
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeTruthy();
+      expect(screen.getByText(/Confirmer la reprogrammation/i)).toBeTruthy();
+      expect(screen.getByText("2026-09-26")).toBeTruthy();
+    });
+
+    // Clic sur "Confirmer le déplacement"
+    const confirmBtn = screen.getByText("Confirmer le déplacement");
+    fireEvent.click(confirmBtn);
+
+    // Vérifier l'appel à rescheduleRental et la fermeture de la modale
+    await waitFor(() => {
+      expect(rescheduleSpy).toHaveBeenCalledWith(expect.objectContaining({
+        new_pickup_date: "2026-09-26",
+        new_return_date: "2026-09-30",
+      }));
+      expect(toastSuccessSpy).toHaveBeenCalled();
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+  });
+
+  it("C4.2 : drag-and-drop vers une plage en conflit -> annulation automatique avec message d'erreur affiché, aucun appel d'écriture déclenché", async () => {
+    const toastErrorSpy = vi.spyOn(toast, "error");
+    const rescheduleSpy = vi.spyOn(useMatrixStore.getState(), "rescheduleRental");
+
+    render(<AvailabilityMatrix />);
+
+    const locationSlot = screen.getAllByTestId("slot-location")[0];
+    // Cellule occupée par un créneau de retard sur var-002 au 2026-09-14
+    const conflictCell = screen.getByTestId("cell-var-002-2026-09-14");
+
+    // Simuler le drag and drop vers la case en conflit
+    fireEvent.dragStart(locationSlot);
+    fireEvent.dragOver(conflictCell);
+    fireEvent.drop(conflictCell);
+
+    // Doit être immédiatement rejeté : pas de modale de confirmation, toast d'erreur affiché
+    await waitFor(() => {
+      expect(toastErrorSpy).toHaveBeenCalled();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(rescheduleSpy).not.toHaveBeenCalled();
     });
   });
 });

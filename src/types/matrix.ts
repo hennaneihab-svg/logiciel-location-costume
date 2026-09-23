@@ -26,5 +26,32 @@ export interface AvailabilityValidationResult {
   motif_refus: string | null;
   conflit_nature: SlotNature | null;
   conflit_reference: string | null;
-  tampon_pressing_jours: number;
+}
+
+export interface RescheduleRentalLineDto {
+  location_id: string;
+  current_variant_id: string;
+  target_variant_id: string;
+  new_pickup_date: string;
+  new_return_date: string;
+}
+
+export interface RescheduleRentalResult {
+  success: boolean;
+  location_id: string;
+  numero_location: string;
+  current_variant_id: string;
+  target_variant_id: string;
+  new_pickup_date: string;
+  new_return_date: string;
+  message: string;
+}
+
+export interface PendingRescheduleProposal {
+  slot: AvailabilitySlot;
+  sourceRow: VariantAvailabilityMatrixRow;
+  targetRow: VariantAvailabilityMatrixRow;
+  newStartDate: string;
+  newEndDate: string;
+  durationDays: number;
 }

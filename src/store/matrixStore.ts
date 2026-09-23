@@ -2,6 +2,10 @@ import { create } from "zustand";
 import { invokeCommand, isTauri } from "@/services/tauri";
 import type {
   VariantAvailabilityMatrixRow,
+  AvailabilityValidationResult,
+  RescheduleRentalLineDto,
+  RescheduleRentalResult,
+  PendingRescheduleProposal,
 } from "@/types/matrix";
 
 // Mock représentatif pour tests et environnement dev hors-Tauri
@@ -150,6 +154,7 @@ interface MatrixStoreState {
   startDate: string; // YYYY-MM-DD
   daysCount: number; // Toujours 30 par défaut
   rows: VariantAvailabilityMatrixRow[];
+  backupRows: VariantAvailabilityMatrixRow[];
   isLoading: boolean;
   error: string | null;
 
@@ -166,6 +171,9 @@ interface MatrixStoreState {
   selectedContractId: string | null;
   selectedContractCode: string | null;
 
+  // Reprogrammation par glisser-déposer (C1, C2)
+  pendingProposal: PendingRescheduleProposal | null;
+
   // Actions
   loadMatrix: (startDate?: string) => Promise<void>;
   setStartDate: (date: string) => void;
@@ -177,12 +185,25 @@ interface MatrixStoreState {
   setPage: (page: number) => void;
   setPageSize: (pageSize: number) => void;
   setSelectedContract: (contractId: string | null, code?: string | null) => void;
+
+  // Méthodes Drag-and-Drop (C2, C3)
+  validateSlotAvailability: (
+    variantId: string,
+    pickupDate: string,
+    returnDate: string,
+    excludeContractId?: string
+  ) => Promise<AvailabilityValidationResult>;
+  rescheduleRental: (dto: RescheduleRentalLineDto) => Promise<RescheduleRentalResult>;
+  optimisticReschedule: (proposal: PendingRescheduleProposal) => void;
+  rollbackOptimisticReschedule: () => void;
+  setPendingProposal: (proposal: PendingRescheduleProposal | null) => void;
 }
 
 export const useMatrixStore = create<MatrixStoreState>((set, get) => ({
   startDate: "2026-09-14", // Date par défaut alignée sur le contexte applicatif
   daysCount: 30,
   rows: [],
+  backupRows: [],
   isLoading: false,
   error: null,
 
@@ -195,6 +216,7 @@ export const useMatrixStore = create<MatrixStoreState>((set, get) => ({
 
   selectedContractId: null,
   selectedContractCode: null,
+  pendingProposal: null,
 
   loadMatrix: async (targetStartDate?: string) => {
     const state = get();
@@ -213,15 +235,19 @@ export const useMatrixStore = create<MatrixStoreState>((set, get) => ({
           dateFin: endIso,
           articleIds,
         });
-        set({ rows: res || [], isLoading: false });
+        const rowsData = res || [];
+        set({ rows: rowsData, backupRows: JSON.parse(JSON.stringify(rowsData)), isLoading: false });
       } else {
         // Environnement mock / test
-        set({ rows: MOCK_MATRIX_ROWS, isLoading: false });
+        const rowsData = JSON.parse(JSON.stringify(MOCK_MATRIX_ROWS));
+        set({ rows: rowsData, backupRows: JSON.parse(JSON.stringify(rowsData)), isLoading: false });
       }
     } catch (err: any) {
       console.warn("[matrixStore] Échec IPC get_availability_matrix, bascule sur mock :", err);
+      const rowsData = JSON.parse(JSON.stringify(MOCK_MATRIX_ROWS));
       set({
-        rows: MOCK_MATRIX_ROWS,
+        rows: rowsData,
+        backupRows: JSON.parse(JSON.stringify(rowsData)),
         isLoading: false,
         error: err?.message || "Erreur de chargement de la matrice",
       });
@@ -242,7 +268,6 @@ export const useMatrixStore = create<MatrixStoreState>((set, get) => ({
 
   resetToToday: () => {
     const now = new Date();
-    // En environnement de démonstration 2026, si nous sommes en 2026 nous utilisons today, sinon '2026-09-14'
     const todayIso = formatDateToIso(now);
     const defaultDate = todayIso.startsWith("2026") ? todayIso : "2026-09-14";
     get().setStartDate(defaultDate);
@@ -271,5 +296,136 @@ export const useMatrixStore = create<MatrixStoreState>((set, get) => ({
 
   setSelectedContract: (contractId: string | null, code?: string | null) => {
     set({ selectedContractId: contractId, selectedContractCode: code || null });
+  },
+
+  setPendingProposal: (proposal: PendingRescheduleProposal | null) => {
+    set({ pendingProposal: proposal });
+  },
+
+  validateSlotAvailability: async (
+    variantId: string,
+    pickupDate: string,
+    returnDate: string,
+    excludeContractId?: string
+  ): Promise<AvailabilityValidationResult> => {
+    if (isTauri()) {
+      return await invokeCommand<AvailabilityValidationResult>("check_availability_slot", {
+        varianteId: variantId,
+        pickupDate,
+        returnDate,
+        excludeContractId: excludeContractId || null,
+      });
+    }
+
+    // Mock validation en environnement hors-Tauri / test Vitest
+    const { rows } = get();
+    const targetRow = rows.find((r) => r.variante_id === variantId);
+    if (!targetRow) {
+      return { disponible: false, motif_refus: "Variante cible introuvable", conflit_nature: null, conflit_reference: null };
+    }
+
+    for (const slot of targetRow.slots) {
+      if (excludeContractId && (slot.reference_id === excludeContractId || slot.reference_code === excludeContractId)) {
+        continue;
+      }
+      // Chevauchement : start1 <= end2 AND end1 >= start2
+      if (pickupDate <= slot.date_fin && returnDate >= slot.date_debut) {
+        return {
+          disponible: false,
+          motif_refus: `Conflit de date avec ${slot.nature} (${slot.reference_code || "créneau actif"}) du ${slot.date_debut} au ${slot.date_fin}`,
+          conflit_nature: slot.nature,
+          conflit_reference: slot.reference_code,
+        };
+      }
+    }
+
+    return { disponible: true, motif_refus: null, conflit_nature: null, conflit_reference: null };
+  },
+
+  rescheduleRental: async (dto: RescheduleRentalLineDto): Promise<RescheduleRentalResult> => {
+    if (isTauri()) {
+      const res = await invokeCommand<RescheduleRentalResult>("reschedule_rental_line", { dto });
+      await get().loadMatrix();
+      return res;
+    }
+
+    // Mode simulation / mock
+    const { rows } = get();
+    const validation = await get().validateSlotAvailability(
+      dto.target_variant_id,
+      dto.new_pickup_date,
+      dto.new_return_date,
+      dto.location_id
+    );
+
+    if (!validation.disponible) {
+      throw new Error(validation.motif_refus || "Conflit de disponibilité");
+    }
+
+    // Met à jour localement
+    const updatedRows = rows.map((row) => {
+      let slots = [...row.slots];
+      if (row.variante_id === dto.current_variant_id) {
+        slots = slots.filter((s) => s.reference_id !== dto.location_id && s.reference_code !== dto.location_id);
+      }
+      if (row.variante_id === dto.target_variant_id) {
+        slots.push({
+          date_debut: dto.new_pickup_date,
+          date_fin: dto.new_return_date,
+          nature: "location",
+          reference_id: dto.location_id,
+          reference_code: dto.location_id,
+          description: `Location reprogrammée`,
+          client_nom: "Client reprogrammé",
+        });
+      }
+      return { ...row, slots };
+    });
+
+    set({ rows: updatedRows, backupRows: JSON.parse(JSON.stringify(updatedRows)) });
+
+    return {
+      success: true,
+      location_id: dto.location_id,
+      numero_location: dto.location_id,
+      current_variant_id: dto.current_variant_id,
+      target_variant_id: dto.target_variant_id,
+      new_pickup_date: dto.new_pickup_date,
+      new_return_date: dto.new_return_date,
+      message: "Reprogrammation effectuée avec succès (mock)",
+    };
+  },
+
+  optimisticReschedule: (proposal: PendingRescheduleProposal) => {
+    const { rows } = get();
+    const backup = JSON.parse(JSON.stringify(rows));
+
+    const updatedRows = rows.map((row) => {
+      let slots = [...row.slots];
+      // Retirer le créneau de la source
+      if (row.variante_id === proposal.sourceRow.variante_id) {
+        slots = slots.filter((s) => s.reference_code !== proposal.slot.reference_code && s.reference_id !== proposal.slot.reference_id);
+      }
+      // Ajouter le créneau déplacé sur la cible
+      if (row.variante_id === proposal.targetRow.variante_id) {
+        slots.push({
+          ...proposal.slot,
+          date_debut: proposal.newStartDate,
+          date_fin: proposal.newEndDate,
+        });
+      }
+      return { ...row, slots };
+    });
+
+    set({ rows: updatedRows, backupRows: backup, pendingProposal: proposal });
+  },
+
+  rollbackOptimisticReschedule: () => {
+    const { backupRows } = get();
+    if (backupRows.length > 0) {
+      set({ rows: JSON.parse(JSON.stringify(backupRows)), pendingProposal: null });
+    } else {
+      set({ pendingProposal: null });
+    }
   },
 }));

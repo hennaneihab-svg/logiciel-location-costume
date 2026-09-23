@@ -101,6 +101,7 @@ pub fn run() {
             // Matrice de disponibilité
             commands::get_availability_matrix,
             commands::check_availability_slot,
+            commands::reschedule_rental_line,
         ])
         .run(tauri::generate_context!())
         .expect("Erreur fatale lors du lancement de l'application Tauri");

@@ -8,6 +8,7 @@ import {
   Info,
   Clock,
   Shirt,
+  Move,
 } from "lucide-react";
 import {
   useMatrixStore,
@@ -16,8 +17,15 @@ import {
   parseIsoDate,
 } from "@/store/matrixStore";
 import { useStockStore } from "@/store/stockStore";
+import { toast } from "sonner";
 import { ContractQuickDetailModal } from "./ContractQuickDetailModal";
-import type { AvailabilitySlot, SlotNature, VariantAvailabilityMatrixRow } from "@/types/matrix";
+import { RescheduleConfirmModal } from "./RescheduleConfirmModal";
+import type {
+  AvailabilitySlot,
+  SlotNature,
+  VariantAvailabilityMatrixRow,
+  PendingRescheduleProposal,
+} from "@/types/matrix";
 
 export const AvailabilityMatrix: React.FC = () => {
   const {
@@ -39,6 +47,12 @@ export const AvailabilityMatrix: React.FC = () => {
     setPage,
     pageSize,
     setPageSize,
+    validateSlotAvailability,
+    rescheduleRental,
+    optimisticReschedule,
+    rollbackOptimisticReschedule,
+    pendingProposal,
+    setPendingProposal,
   } = useMatrixStore();
 
   const { articles } = useStockStore();
@@ -63,8 +77,19 @@ export const AvailabilityMatrix: React.FC = () => {
     y: number;
   } | null>(null);
 
-  // État modal de détail contrat
+  // État modal de détail contrat (clic simple)
   const [inspectedContractRef, setInspectedContractRef] = useState<string | null>(null);
+
+  // État Drag and Drop
+  const [draggingSlot, setDraggingSlot] = useState<{
+    slot: AvailabilitySlot;
+    sourceRow: VariantAvailabilityMatrixRow;
+  } | null>(null);
+
+  const [dragOverCell, setDragOverCell] = useState<{
+    varianteId: string;
+    dateIso: string;
+  } | null>(null);
 
   // Chargement initial
   useEffect(() => {
@@ -177,6 +202,165 @@ export const AvailabilityMatrix: React.FC = () => {
     }
   };
 
+  // ============================================================================
+  // GESTION DU DRAG AND DROP (C1, C2, C3)
+  // ============================================================================
+
+  const handleDragStart = (
+    e: React.DragEvent,
+    slot: AvailabilitySlot,
+    sourceRow: VariantAvailabilityMatrixRow
+  ) => {
+    if (slot.nature !== "location") {
+      e.preventDefault();
+      return;
+    }
+
+    setHoveredSlot(null);
+    setDraggingSlot({ slot, sourceRow });
+
+    const payload = JSON.stringify({
+      slot,
+      sourceRowId: sourceRow.variante_id,
+    });
+    if (e.dataTransfer) {
+      e.dataTransfer.setData("application/json", payload);
+      e.dataTransfer.effectAllowed = "move";
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent, targetRow: VariantAvailabilityMatrixRow, dateIso: string) => {
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = "move";
+    }
+    if (
+      !dragOverCell ||
+      dragOverCell.varianteId !== targetRow.variante_id ||
+      dragOverCell.dateIso !== dateIso
+    ) {
+      setDragOverCell({ varianteId: targetRow.variante_id, dateIso });
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverCell(null);
+  };
+
+  const handleDrop = async (
+    e: React.DragEvent,
+    targetRow: VariantAvailabilityMatrixRow,
+    dropDateIso: string
+  ) => {
+    e.preventDefault();
+    setDragOverCell(null);
+
+    let slot = draggingSlot?.slot;
+    let sourceRow = draggingSlot?.sourceRow;
+
+    if (!slot || !sourceRow) {
+      const rawData = e.dataTransfer.getData("application/json");
+      if (rawData) {
+        try {
+          const parsed = JSON.parse(rawData);
+          slot = parsed.slot;
+          sourceRow = rows.find((r) => r.variante_id === parsed.sourceRowId) || targetRow;
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    setDraggingSlot(null);
+
+    if (!slot || !sourceRow) return;
+
+    // Calculer la durée initiale en jours
+    const startObj = parseIsoDate(slot.date_debut);
+    const endObj = parseIsoDate(slot.date_fin);
+    const durationDays = Math.max(1, Math.round((endObj.getTime() - startObj.getTime()) / (1000 * 60 * 60 * 24)));
+
+    // Nouvelles dates cibles
+    const newStartObj = parseIsoDate(dropDateIso);
+    const newEndObj = addDays(newStartObj, durationDays);
+    const newStartDate = dropDateIso;
+    const newEndDate = formatDateToIso(newEndObj);
+
+    // Si la cible est identique aux dates et variantes actuelles, ne rien faire
+    if (
+      sourceRow.variante_id === targetRow.variante_id &&
+      slot.date_debut === newStartDate
+    ) {
+      return;
+    }
+
+    const proposal: PendingRescheduleProposal = {
+      slot,
+      sourceRow,
+      targetRow,
+      newStartDate,
+      newEndDate,
+      durationDays,
+    };
+
+    // 1. Déplacement visuel optimiste immédiat (C1)
+    optimisticReschedule(proposal);
+
+    // 2. Validation immédiate côté backend (C2)
+    const excludeId = slot.reference_id || slot.reference_code || undefined;
+    const validation = await validateSlotAvailability(
+      targetRow.variante_id,
+      newStartDate,
+      newEndDate,
+      excludeId
+    );
+
+    if (!validation.disponible) {
+      // Annulation visuelle immédiate + affichage du motif exact
+      rollbackOptimisticReschedule();
+      toast.error(
+        validation.motif_refus ||
+          "Impossible de déplacer la réservation : conflit de disponibilité avec une autre location ou un tampon pressing."
+      );
+      return;
+    }
+
+    // 3. Si validé : ouverture de la modal de confirmation explicite avant écriture
+    setPendingProposal(proposal);
+  };
+
+  const handleConfirmReschedule = async () => {
+    if (!pendingProposal) return;
+
+    try {
+      const locationId = pendingProposal.slot.reference_id || pendingProposal.slot.reference_code || "";
+      await rescheduleRental({
+        location_id: locationId,
+        current_variant_id: pendingProposal.sourceRow.variante_id,
+        target_variant_id: pendingProposal.targetRow.variante_id,
+        new_pickup_date: pendingProposal.newStartDate,
+        new_return_date: pendingProposal.newEndDate,
+      });
+
+      toast.success(
+        `Contrat ${pendingProposal.slot.reference_code || locationId} reprogrammé avec succès du ${pendingProposal.newStartDate} au ${pendingProposal.newEndDate} !`
+      );
+      setPendingProposal(null);
+    } catch (err: any) {
+      rollbackOptimisticReschedule();
+      await loadMatrix();
+      setPendingProposal(null);
+      toast.error(
+        err?.message || "Erreur lors de la confirmation de reprogrammation (conflit concurrent)."
+      );
+    }
+  };
+
+  const handleCancelReschedule = () => {
+    rollbackOptimisticReschedule();
+    setPendingProposal(null);
+  };
+
   return (
     <div className="space-y-4">
       {/* 1. Barre de Contrôle et Navigation Temporelle */}
@@ -235,12 +419,12 @@ export const AvailabilityMatrix: React.FC = () => {
           </button>
         </div>
 
-        {/* Légende Interactive */}
+        {/* Légende Interactive & Drag Help */}
         <div className="flex flex-wrap items-center gap-2.5 text-[11px]">
           <span className="text-muted-foreground font-medium">Légende :</span>
           <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/30">
             <span className="w-2 h-2 rounded-full bg-blue-500" />
-            <span className="font-semibold">Location</span>
+            <span className="font-semibold">Location (Glissable)</span>
           </div>
           <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/30">
             <span className="w-2 h-2 rounded-full bg-amber-500" />
@@ -424,18 +608,33 @@ export const AvailabilityMatrix: React.FC = () => {
                       const slot = findSlotForDate(row, d.iso);
                       const isSlotStart = slot && slot.date_debut === d.iso;
                       const isSlotEnd = slot && slot.date_fin === d.iso;
+                      const isDragTarget =
+                        dragOverCell?.varianteId === row.variante_id &&
+                        dragOverCell?.dateIso === d.iso;
 
                       if (!slot) {
                         return (
                           <td
                             key={d.iso}
+                            data-testid={`cell-${row.variante_id}-${d.iso}`}
+                            onDragOver={(e) => handleDragOver(e, row, d.iso)}
+                            onDragLeave={handleDragLeave}
+                            onDrop={(e) => handleDrop(e, row, d.iso)}
                             className={`p-0 border-r border-border/30 text-center transition-colors hover:bg-emerald-500/10 ${
-                              d.isWeekend ? "bg-secondary/20" : ""
+                              isDragTarget
+                                ? "bg-primary/25 ring-2 ring-primary ring-inset"
+                                : d.isWeekend
+                                ? "bg-secondary/20"
+                                : ""
                             }`}
-                            title={`${row.article_nom} (T.${row.taille}) - Disponible le ${d.iso}`}
+                            title={`${row.article_nom} (T.${row.taille}) - Glisser ici pour reprogrammer au ${d.iso}`}
                           >
                             <div className="h-9 w-full flex items-center justify-center">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/20 opacity-0 hover:opacity-100 transition-opacity" />
+                              {isDragTarget ? (
+                                <Move className="w-3.5 h-3.5 text-primary animate-bounce" />
+                              ) : (
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/20 opacity-0 hover:opacity-100 transition-opacity" />
+                              )}
                             </div>
                           </td>
                         );
@@ -443,44 +642,58 @@ export const AvailabilityMatrix: React.FC = () => {
 
                       const style = getSlotStyle(slot.nature);
                       const isClickable = slot.nature === "location" || slot.nature === "retard";
+                      const isDraggable = slot.nature === "location";
 
                       return (
                         <td
                           key={d.iso}
+                          data-testid={`cell-${row.variante_id}-${d.iso}`}
                           onClick={() => handleCellClick(slot)}
+                          onDragOver={(e) => handleDragOver(e, row, d.iso)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={(e) => handleDrop(e, row, d.iso)}
                           onMouseEnter={(e) => {
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            setHoveredSlot({
-                              slot,
-                              row,
-                              dateIso: d.iso,
-                              x: rect.left + rect.width / 2,
-                              y: rect.top,
-                            });
+                            if (!draggingSlot) {
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              setHoveredSlot({
+                                slot,
+                                row,
+                                dateIso: d.iso,
+                                x: rect.left + rect.width / 2,
+                                y: rect.top,
+                              });
+                            }
                           }}
                           onMouseLeave={() => setHoveredSlot(null)}
                           className={`p-0.5 border-r border-border/30 transition-all ${
-                            d.isWeekend ? "bg-secondary/20" : ""
-                          }`}
+                            isDragTarget ? "bg-primary/25 ring-2 ring-primary ring-inset" : ""
+                          } ${d.isWeekend ? "bg-secondary/20" : ""}`}
                         >
                           <div
+                            draggable={isDraggable}
+                            onDragStart={(e) => isDraggable && handleDragStart(e, slot, row)}
                             data-testid={`slot-${slot.nature}`}
                             data-reference={slot.reference_code || slot.reference_id || ""}
                             className={`h-8 w-full border flex items-center justify-center text-[10px] font-bold transition-all shadow-xs ${
                               style.bg
                             } ${isClickable ? "cursor-pointer active:scale-95" : "cursor-default"} ${
+                              isDraggable ? "cursor-grab active:cursor-grabbing hover:ring-1 hover:ring-blue-400" : ""
+                            } ${
                               isSlotStart ? "rounded-l-md border-l-2" : "rounded-l-none border-l-0"
                             } ${
                               isSlotEnd ? "rounded-r-md border-r-2" : "rounded-r-none border-r-0"
                             }`}
                           >
                             {isSlotStart && (
-                              <span className="truncate px-1 tracking-tighter">
-                                {slot.nature === "pressing"
-                                  ? "PRS"
-                                  : slot.reference_code
-                                  ? slot.reference_code.replace("LOC-2026-", "#")
-                                  : "LOC"}
+                              <span className="truncate px-1 tracking-tighter flex items-center gap-0.5">
+                                {isDraggable && <Move className="w-2.5 h-2.5 opacity-60 shrink-0" />}
+                                <span>
+                                  {slot.nature === "pressing"
+                                    ? "PRS"
+                                    : slot.reference_code
+                                    ? slot.reference_code.replace("LOC-2026-", "#")
+                                    : "LOC"}
+                                </span>
                               </span>
                             )}
                           </div>
@@ -500,7 +713,7 @@ export const AvailabilityMatrix: React.FC = () => {
             <Info className="w-3.5 h-3.5 text-primary" />
             <span>
               Horizon glissant de 30 jours : du <strong>{startDate}</strong> au{" "}
-              <strong>{daysList[daysList.length - 1]?.iso}</strong>.
+              <strong>{daysList[daysList.length - 1]?.iso}</strong>. Glissez-déposez un bloc bleu pour le reprogrammer.
             </span>
           </div>
 
@@ -512,7 +725,7 @@ export const AvailabilityMatrix: React.FC = () => {
       </div>
 
       {/* 5. Tooltip Interactif au Survol (Floating Info-bulle) */}
-      {hoveredSlot && (
+      {hoveredSlot && !draggingSlot && (
         <div
           role="tooltip"
           className="fixed z-50 pointer-events-none -translate-x-1/2 -translate-y-full mb-2 p-3 rounded-xl bg-popover text-popover-foreground border border-border shadow-xl text-xs max-w-xs animate-in fade-in zoom-in-95 duration-100"
@@ -571,17 +784,26 @@ export const AvailabilityMatrix: React.FC = () => {
 
           {(hoveredSlot.slot.nature === "location" || hoveredSlot.slot.nature === "retard") && (
             <div className="mt-2 pt-1 border-t border-border/50 text-[9px] text-primary font-bold">
-              💡 Cliquez pour ouvrir la fiche du contrat
+              💡 Cliquez pour ouvrir la fiche • Glissez pour reprogrammer
             </div>
           )}
         </div>
       )}
 
-      {/* 6. Modal Fiche Rapide de Contrat */}
+      {/* 6. Modal Fiche Rapide de Contrat (Clic simple) */}
       {inspectedContractRef && (
         <ContractQuickDetailModal
           contractIdOrCode={inspectedContractRef}
           onClose={() => setInspectedContractRef(null)}
+        />
+      )}
+
+      {/* 7. Modal Confirmation Explicite de Déplacement (Drop validé) */}
+      {pendingProposal && (
+        <RescheduleConfirmModal
+          proposal={pendingProposal}
+          onConfirm={handleConfirmReschedule}
+          onCancel={handleCancelReschedule}
         />
       )}
     </div>
