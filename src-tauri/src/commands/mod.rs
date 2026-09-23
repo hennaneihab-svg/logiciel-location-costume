@@ -3494,4 +3494,382 @@ pub async fn delete_article_photo(
     Ok(res.rows_affected() > 0)
 }
 
+// ----------------------------------------------------------------------------
+// RAPPORTS & EXPORTS FINANCIERS, CAISSE ET STOCK
+// ----------------------------------------------------------------------------
+
+pub fn resolve_report_date_bounds(
+    periode: Option<&str>,
+    date_debut: Option<&str>,
+    date_fin: Option<&str>,
+) -> (String, String) {
+    let now = chrono::Local::now();
+    let today_str = now.format("%Y-%m-%d").to_string();
+
+    match periode.unwrap_or("mois") {
+        "aujourdhui" => (today_str.clone(), today_str),
+        "semaine" => {
+            let week_ago = now - chrono::Duration::days(7);
+            (week_ago.format("%Y-%m-%d").to_string(), today_str)
+        }
+        "annee" => {
+            let year_start = format!("{}-01-01", now.format("%Y"));
+            (year_start, today_str)
+        }
+        "personnalise" => {
+            let start = date_debut.filter(|s| !s.is_empty()).unwrap_or(&today_str).to_string();
+            let end = date_fin.filter(|s| !s.is_empty()).unwrap_or(&today_str).to_string();
+            (start, end)
+        }
+        _ => { // "mois" par défaut
+            let month_start = format!("{}-01", now.format("%Y-%m"));
+            (month_start, today_str)
+        }
+    }
+}
+
+pub async fn execute_get_rapports_overview(
+    pool: &sqlx::SqlitePool,
+    periode: Option<String>,
+    date_debut: Option<String>,
+    date_fin: Option<String>,
+) -> Result<RapportsOverviewDto, AppError> {
+    let p_str = periode.unwrap_or_else(|| "mois".to_string());
+    let (d_start, d_end) = resolve_report_date_bounds(
+        Some(p_str.as_str()),
+        date_debut.as_deref(),
+        date_fin.as_deref(),
+    );
+
+    // 1. FINANCIER
+    // CA Locations
+    let row_ca_loc: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(montant_total_ttc_centimes), 0)
+         FROM locations
+         WHERE statut IN ('en_cours', 'retourne', 'en_retard')
+           AND date(created_at) >= ? AND date(created_at) <= ?"
+    )
+    .bind(&d_start)
+    .bind(&d_end)
+    .fetch_one(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+    let ca_locations_centimes = row_ca_loc.0;
+
+    // CA Ventes
+    let row_ca_vte: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(montant_total_centimes), 0)
+         FROM ventes
+         WHERE statut = 'completee'
+           AND date(created_at) >= ? AND date(created_at) <= ?"
+    )
+    .bind(&d_start)
+    .bind(&d_end)
+    .fetch_one(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+    let ca_ventes_centimes = row_ca_vte.0;
+
+    let ca_total_centimes = ca_locations_centimes + ca_ventes_centimes;
+
+    // Contrats et Retards
+    let row_contrats: (i64, i64) = sqlx::query_as(
+        "SELECT 
+            COUNT(*) AS total_contrats,
+            COUNT(CASE WHEN statut = 'en_retard' THEN 1 END) AS retards
+         FROM locations
+         WHERE statut != 'annule'
+           AND date(created_at) >= ? AND date(created_at) <= ?"
+    )
+    .bind(&d_start)
+    .bind(&d_end)
+    .fetch_one(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+    let nombre_contrats = row_contrats.0;
+    let retards = row_contrats.1;
+
+    let taux_retard_pourcentage = if nombre_contrats > 0 {
+        ((retards as f64 / nombre_contrats as f64) * 1000.0).round() / 10.0
+    } else {
+        0.0
+    };
+
+    let row_nb_vte: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM ventes WHERE statut = 'completee' AND date(created_at) >= ? AND date(created_at) <= ?"
+    )
+    .bind(&d_start)
+    .bind(&d_end)
+    .fetch_one(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+    let nombre_ventes = row_nb_vte.0;
+
+    let total_operations = nombre_contrats + nombre_ventes;
+    let panier_moyen_centimes = if total_operations > 0 {
+        ca_total_centimes / total_operations
+    } else {
+        0
+    };
+
+    let financier = RapportFinancierDto {
+        ca_total_centimes,
+        ca_locations_centimes,
+        ca_ventes_centimes,
+        nombre_contrats,
+        nombre_ventes,
+        taux_retard_pourcentage,
+        panier_moyen_centimes,
+    };
+
+    // 2. CAISSE & REGLEMENTS
+    let rows_reglements: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT moyen_paiement, COALESCE(SUM(montant_centimes), 0) AS total, COUNT(*) AS nb
+         FROM paiements
+         WHERE date(date_paiement) >= ? AND date(date_paiement) <= ?
+         GROUP BY moyen_paiement"
+    )
+    .bind(&d_start)
+    .bind(&d_end)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+
+    let mut total_reglements_centimes = 0i64;
+    let mut total_nb_trans = 0i64;
+    let mut modes_map = std::collections::HashMap::new();
+
+    for (moyen, montant, count) in rows_reglements {
+        total_reglements_centimes += montant;
+        total_nb_trans += count;
+        modes_map.insert(moyen, (montant, count));
+    }
+
+    let default_modes = vec![
+        ("especes", "Espèces"),
+        ("carte_bancaire", "Carte Bancaire"),
+        ("cheque", "Chèque"),
+        ("virement", "Virement"),
+    ];
+
+    let mut reglements_par_mode = Vec::new();
+    for (key, label) in default_modes {
+        let (montant, count) = modes_map.remove(key).unwrap_or((0, 0));
+        reglements_par_mode.push(ModePaiementStatDto {
+            moyen: key.to_string(),
+            label: label.to_string(),
+            montant_centimes: montant,
+            nb_transactions: count,
+        });
+    }
+
+    for (moyen, (montant, count)) in modes_map {
+        reglements_par_mode.push(ModePaiementStatDto {
+            label: moyen.clone(),
+            moyen,
+            montant_centimes: montant,
+            nb_transactions: count,
+        });
+    }
+
+    let caisse = RapportCaisseDto {
+        total_reglements_centimes,
+        reglements_par_mode,
+        nombre_transactions: total_nb_trans,
+    };
+
+    // 3. STOCK & VALORISATION
+    let row_stock: (i64, i64, i64) = sqlx::query_as(
+        "SELECT 
+            COUNT(*) AS total_pieces,
+            COUNT(CASE WHEN statut = 'en_location' THEN 1 END) AS en_loc,
+            COUNT(CASE WHEN statut = 'au_lavage' THEN 1 END) AS en_lavage
+         FROM variantes_stock
+         WHERE statut != 'au_rebut'"
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+    let nombre_articles_total = row_stock.0;
+    let pieces_en_location = row_stock.1;
+
+    let row_active_pressing: (i64,) = sqlx::query_as(
+        "SELECT COUNT(DISTINCT variante_id) 
+         FROM pressing_envois 
+         WHERE statut IN ('envoye', 'en_traitement')"
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+    let pieces_en_pressing = std::cmp::max(row_stock.2, row_active_pressing.0);
+
+    let row_cout_pressing: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(cout_centimes), 0)
+         FROM pressing_envois
+         WHERE statut != 'annule'
+           AND date(date_envoi) >= ? AND date(date_envoi) <= ?"
+    )
+    .bind(&d_start)
+    .bind(&d_end)
+    .fetch_one(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+    let cout_pressing_centimes = row_cout_pressing.0;
+
+    let row_valeur_stock: (i64,) = sqlx::query_as(
+        "SELECT COALESCE(SUM(COALESCE(a.valeur_remplacement_centimes, a.prix_achat_centimes, 0)), 0)
+         FROM variantes_stock vs
+         JOIN articles a ON vs.article_id = a.id
+         WHERE vs.statut != 'au_rebut'"
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+    let valeur_totale_stock_centimes = row_valeur_stock.0;
+
+    let stock = RapportStockDto {
+        valeur_totale_stock_centimes,
+        nombre_articles_total,
+        pieces_en_location,
+        pieces_en_pressing,
+        cout_pressing_centimes,
+    };
+
+    Ok(RapportsOverviewDto {
+        periode: p_str,
+        date_debut: d_start,
+        date_fin: d_end,
+        financier,
+        caisse,
+        stock,
+    })
+}
+
+pub async fn execute_get_financial_transactions_report(
+    pool: &sqlx::SqlitePool,
+    periode: Option<String>,
+    date_debut: Option<String>,
+    date_fin: Option<String>,
+) -> Result<Vec<FinancialTransactionRowDto>, AppError> {
+    let p_str = periode.unwrap_or_else(|| "mois".to_string());
+    let (d_start, d_end) = resolve_report_date_bounds(
+        Some(p_str.as_str()),
+        date_debut.as_deref(),
+        date_fin.as_deref(),
+    );
+
+    let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, Option<String>, Option<String>, String, i64, String, Option<String>)>(
+        "SELECT 
+            p.id,
+            l.numero_contrat,
+            v.numero_vente,
+            p.type_paiement,
+            c.nom_complet AS client_location_nom,
+            v.client_nom AS client_vente_nom,
+            p.moyen_paiement,
+            p.montant_centimes,
+            p.date_paiement,
+            u.nom_complet AS operateur_nom
+         FROM paiements p
+         LEFT JOIN locations l ON p.location_id = l.id
+         LEFT JOIN clients c ON l.client_id = c.id
+         LEFT JOIN ventes v ON p.vente_id = v.id
+         LEFT JOIN utilisateurs u ON p.utilisateur_id = u.id
+         WHERE date(p.date_paiement) >= ? AND date(p.date_paiement) <= ?
+         ORDER BY p.date_paiement DESC"
+    )
+    .bind(&d_start)
+    .bind(&d_end)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+
+    let result = rows.into_iter().map(|r| {
+        let reference = r.1.or(r.2).unwrap_or_else(|| format!("PAI-{}", &r.0[..8.min(r.0.len())]));
+        let client_nom = r.4.or(r.5).unwrap_or_else(|| "Client Comptoir".to_string());
+        FinancialTransactionRowDto {
+            id: r.0,
+            reference,
+            type_operation: r.3,
+            client_nom,
+            moyen_paiement: r.6,
+            montant_centimes: r.7,
+            date_operation: r.8,
+            operateur_nom: r.9.unwrap_or_else(|| "Opérateur".to_string()),
+        }
+    }).collect();
+
+    Ok(result)
+}
+
+pub async fn execute_get_stock_inventory_report(
+    pool: &sqlx::SqlitePool,
+) -> Result<Vec<StockInventoryRowDto>, AppError> {
+    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, Option<String>, String, Option<i64>, Option<i64>, i64)>(
+        "SELECT 
+            vs.id AS variant_id,
+            a.id AS article_id,
+            a.reference,
+            a.nom,
+            c.nom AS categorie,
+            vs.taille,
+            vs.statut,
+            a.valeur_remplacement_centimes,
+            a.prix_achat_centimes,
+            COALESCE((SELECT SUM(pe.cout_centimes) FROM pressing_envois pe WHERE pe.variante_id = vs.id AND pe.statut != 'annule'), 0) AS cout_pressing
+         FROM variantes_stock vs
+         JOIN articles a ON vs.article_id = a.id
+         LEFT JOIN categories c ON a.categorie_id = c.id
+         WHERE vs.statut != 'au_rebut'
+         ORDER BY a.nom ASC, vs.taille ASC"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::DatabaseError)?;
+
+    let result = rows.into_iter().map(|r| {
+        let valeur = r.7.or(r.8).unwrap_or(0);
+        StockInventoryRowDto {
+            variant_id: r.0,
+            article_id: r.1,
+            reference: r.2,
+            nom: r.3,
+            categorie: r.4.unwrap_or_else(|| "Général".to_string()),
+            taille: r.5.unwrap_or_else(|| "Unique".to_string()),
+            statut: r.6,
+            valeur_remplacement_centimes: valeur,
+            cout_pressing_total_centimes: r.9,
+        }
+    }).collect();
+
+    Ok(result)
+}
+
+#[command]
+pub async fn get_rapports_overview(
+    periode: Option<String>,
+    date_debut: Option<String>,
+    date_fin: Option<String>,
+    state: State<'_, DbState>,
+) -> Result<RapportsOverviewDto, AppError> {
+    execute_get_rapports_overview(&state.pool, periode, date_debut, date_fin).await
+}
+
+#[command]
+pub async fn get_financial_transactions_report(
+    periode: Option<String>,
+    date_debut: Option<String>,
+    date_fin: Option<String>,
+    state: State<'_, DbState>,
+) -> Result<Vec<FinancialTransactionRowDto>, AppError> {
+    execute_get_financial_transactions_report(&state.pool, periode, date_debut, date_fin).await
+}
+
+#[command]
+pub async fn get_stock_inventory_report(
+    state: State<'_, DbState>,
+) -> Result<Vec<StockInventoryRowDto>, AppError> {
+    execute_get_stock_inventory_report(&state.pool).await
+}
+
 

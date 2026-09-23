@@ -103,6 +103,10 @@ pub fn run() {
             commands::get_availability_matrix,
             commands::check_availability_slot,
             commands::reschedule_rental_line,
+            // Rapports & Exports
+            commands::get_rapports_overview,
+            commands::get_financial_transactions_report,
+            commands::get_stock_inventory_report,
         ])
         .run(tauri::generate_context!())
         .expect("Erreur fatale lors du lancement de l'application Tauri");

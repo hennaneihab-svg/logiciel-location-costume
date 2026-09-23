@@ -673,3 +673,73 @@ pub struct CashSessionDto {
     pub operator_notes: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RapportFinancierDto {
+    pub ca_total_centimes: i64,
+    pub ca_locations_centimes: i64,
+    pub ca_ventes_centimes: i64,
+    pub nombre_contrats: i64,
+    pub nombre_ventes: i64,
+    pub taux_retard_pourcentage: f64,
+    pub panier_moyen_centimes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModePaiementStatDto {
+    pub moyen: String,
+    pub label: String,
+    pub montant_centimes: i64,
+    pub nb_transactions: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RapportCaisseDto {
+    pub total_reglements_centimes: i64,
+    pub reglements_par_mode: Vec<ModePaiementStatDto>,
+    pub nombre_transactions: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RapportStockDto {
+    pub valeur_totale_stock_centimes: i64,
+    pub nombre_articles_total: i64,
+    pub pieces_en_location: i64,
+    pub pieces_en_pressing: i64,
+    pub cout_pressing_centimes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RapportsOverviewDto {
+    pub periode: String,
+    pub date_debut: String,
+    pub date_fin: String,
+    pub financier: RapportFinancierDto,
+    pub caisse: RapportCaisseDto,
+    pub stock: RapportStockDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FinancialTransactionRowDto {
+    pub id: String,
+    pub reference: String,
+    pub type_operation: String,
+    pub client_nom: String,
+    pub moyen_paiement: String,
+    pub montant_centimes: i64,
+    pub date_operation: String,
+    pub operateur_nom: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StockInventoryRowDto {
+    pub variant_id: String,
+    pub article_id: String,
+    pub reference: String,
+    pub nom: String,
+    pub categorie: String,
+    pub taille: String,
+    pub statut: String,
+    pub valeur_remplacement_centimes: i64,
+    pub cout_pressing_total_centimes: i64,
+}
+
