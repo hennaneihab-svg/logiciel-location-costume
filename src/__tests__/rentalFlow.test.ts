@@ -267,4 +267,105 @@ describe("Module D & C — Flux de Création de Location de Bout en Bout", () =>
     invokeSpy.mockRestore();
     localStorageSpy.mockRestore();
   });
+
+  it("En mode Tauri : createRentalContract transmet pack_lines dans le DTO et les lignes ont bien un pack_id", async () => {
+    const tauriModule = await import("@/services/tauri");
+    const isTauriSpy = vi.spyOn(tauriModule, "isTauri").mockReturnValue(true);
+    useAuthStore.setState({ currentUser: INITIAL_USERS[0], isAuthenticated: true });
+
+    const mockCreatedContract = {
+      id: "loc-pack-test-001",
+      contract_number: "LOC-2026-0100",
+      customer_id: "cli-001",
+      customer_name: "Jean Dupont",
+      customer_phone: "06 12 34 56 78",
+      status: "reserve" as const,
+      pickup_date: "2026-12-01",
+      return_date_scheduled: "2026-12-04",
+      items: [
+        {
+          variant_id: "var-003",
+          article_id: "art-002",
+          article_name: "Smoking Midnight Blue",
+          reference: "SMK-BLEU-02",
+          barcode: "BAR-SMK-002-52",
+          size: "52",
+          sub_size: "Standard",
+          unit_price_cents: 19000,
+          deposit_cents: 50000,
+          cleaning_fee_cents: 1500,
+          pickup_condition: "excellent",
+          is_returned: false,
+        },
+        {
+          variant_id: undefined,
+          article_id: "art-018",
+          article_name: "Nœud Papillon Satin",
+          reference: "ACC-NOEUD-01",
+          barcode: "ACC-018",
+          size: "Unique",
+          unit_price_cents: 2000,
+          deposit_cents: 0,
+          cleaning_fee_cents: 0,
+          pickup_condition: "bon",
+          is_returned: false,
+        },
+      ],
+      total_rental_cents: 21000,
+      cleaning_fee_cents: 1500,
+      discount_cents: 0,
+      late_fee_cents: 0,
+      damage_fee_cents: 0,
+      total_amount_cents: 21000,
+      deposit_amount_cents: 50000,
+      deposit_status: "empreinte_cb" as const,
+      deposit_method: "empreinte_cb" as const,
+      paid_amount_cents: 21000,
+      payment_method: "carte_bancaire" as const,
+      remaining_amount_cents: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const invokeSpy = vi.spyOn(tauriModule, "invokeCommand").mockResolvedValue(mockCreatedContract);
+
+    // Création d'une location avec 1 variante libre + 1 pack (1 variante + 1 article quantité)
+    const packLinesInput = [
+      { pack_id: "pack-marie-01", variante_id: "var-003", quantite: 1 },
+      { pack_id: "pack-marie-01", article_id: "art-018", quantite: 1 },
+    ];
+
+    const result = await useRentalStore.getState().createRentalContract({
+      customer_id: "cli-001",
+      pickup_date: "2026-12-01",
+      return_date_scheduled: "2026-12-04",
+      selected_variant_ids: [],  // Aucune variante libre, tout via pack
+      pack_lines: packLinesInput,
+      discount_cents: 0,
+      deposit_method: "empreinte_cb",
+      deposit_amount_cents: 50000,
+      paid_amount_cents: 21000,
+      payment_method: "carte_bancaire",
+    });
+
+    // Vérification que le DTO transmis à Tauri contient bien pack_lines avec les pack_id
+    expect(invokeSpy).toHaveBeenCalledWith("create_rental", expect.objectContaining({
+      dto: expect.objectContaining({
+        customer_id: "cli-001",
+        utilisateur_id: "usr-001",
+        selected_variant_ids: [],
+        pack_lines: expect.arrayContaining([
+          expect.objectContaining({ pack_id: "pack-marie-01", variante_id: "var-003" }),
+          expect.objectContaining({ pack_id: "pack-marie-01", article_id: "art-018" }),
+        ]),
+      }),
+    }));
+
+    expect(result.contract_number).toBe("LOC-2026-0100");
+    // Le contrat retourné contient bien les 2 articles du pack
+    expect(result.items).toHaveLength(2);
+
+    isTauriSpy.mockRestore();
+    invokeSpy.mockRestore();
+  });
 });

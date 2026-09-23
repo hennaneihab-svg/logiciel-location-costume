@@ -474,6 +474,14 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
           event_date: input.event_date || null,
           selected_variant_ids: input.selected_variant_ids,
           quantity_items: null,
+          pack_lines: input.pack_lines
+            ? input.pack_lines.map((pl) => ({
+                pack_id: pl.pack_id,
+                variante_id: pl.variante_id || null,
+                article_id: pl.article_id || null,
+                quantite: pl.quantite,
+              }))
+            : null,
           discount_cents: input.discount_cents || 0,
           deposit_method: input.deposit_method,
           deposit_amount_cents: input.deposit_amount_cents,

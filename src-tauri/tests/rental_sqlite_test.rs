@@ -68,6 +68,7 @@ async fn test_create_rental_contract_and_numbering() {
         event_date: Some("2026-10-11".to_string()),
         selected_variant_ids: vec!["var-003".to_string()],
         quantity_items: None,
+        pack_lines: None,
         discount_cents: Some(1000),
         deposit_method: "empreinte_cb".to_string(),
         deposit_amount_cents: Some(45000),
@@ -119,6 +120,7 @@ async fn test_date_collision_and_stock_rollback() {
         event_date: None,
         selected_variant_ids: vec!["var-001".to_string()],
         quantity_items: None,
+        pack_lines: None,
         discount_cents: None,
         deposit_method: "cheque".to_string(),
         deposit_amount_cents: None,
@@ -139,6 +141,7 @@ async fn test_date_collision_and_stock_rollback() {
         event_date: None,
         selected_variant_ids: vec!["var-001".to_string()],
         quantity_items: None,
+        pack_lines: None,
         discount_cents: None,
         deposit_method: "empreinte_cb".to_string(),
         deposit_amount_cents: None,
@@ -196,6 +199,7 @@ async fn test_concurrent_rental_creation_atomicity_20_iterations() {
                 event_date: None,
                 selected_variant_ids: vec![v1],
                 quantity_items: None,
+                pack_lines: None,
                 discount_cents: None,
                 deposit_method: "especes".to_string(),
                 deposit_amount_cents: None,
@@ -215,6 +219,7 @@ async fn test_concurrent_rental_creation_atomicity_20_iterations() {
                 event_date: None,
                 selected_variant_ids: vec![v2],
                 quantity_items: None,
+                pack_lines: None,
                 discount_cents: None,
                 deposit_method: "carte_bancaire".to_string(),
                 deposit_amount_cents: None,
@@ -518,6 +523,7 @@ async fn test_mandatory_user_and_today_local() {
         event_date: None,
         selected_variant_ids: vec!["var-001".to_string()],
         quantity_items: None,
+        pack_lines: None,
         discount_cents: None,
         deposit_method: "especes".to_string(),
         deposit_amount_cents: None,
@@ -541,4 +547,177 @@ async fn test_mandatory_user_and_today_local() {
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[tokio::test]
+async fn test_create_rental_with_pack_lines_and_atomicity() {
+    let test_dir = std::env::temp_dir().join(format!("test_pack_rental_atomicity_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    // 1. Création d'un contrat avec lignes issues d'un pack (1 variante + 1 accessoire quantité)
+    let pack_id = "pack-marie-01";
+    let dto = CreateRentalContractDto {
+        customer_id: "cli-001".to_string(),
+        utilisateur_id: Some("usr-001".to_string()),
+        pickup_date: "2027-02-10".to_string(),
+        return_date_scheduled: "2027-02-14".to_string(),
+        event_date: Some("2027-02-12".to_string()),
+        selected_variant_ids: vec![],
+        quantity_items: None,
+        pack_lines: Some(vec![
+            PackLineItemDto {
+                pack_id: pack_id.to_string(),
+                variante_id: Some("var-003".to_string()), // Smoking 52
+                article_id: None,
+                quantite: 1,
+            },
+            PackLineItemDto {
+                pack_id: pack_id.to_string(),
+                variante_id: None,
+                article_id: Some("art-018".to_string()), // Noeud papillon mode quantite
+                quantite: 1,
+            },
+        ]),
+        discount_cents: None,
+        deposit_method: "empreinte_cb".to_string(),
+        deposit_amount_cents: Some(50000),
+        paid_amount_cents: Some(28000),
+        payment_method: "carte_bancaire".to_string(),
+        notes: Some("Location de pack complet".to_string()),
+    };
+
+    let contract = execute_create_rental(&pool, dto).await.expect("Création contrat pack réussie");
+    assert_eq!(contract.status, "reserve");
+
+    // Vérifier les lignes_location insérées avec pack_id
+    let lines: Vec<(String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, variante_id, article_id, pack_id FROM lignes_location WHERE location_id = ? ORDER BY id ASC"
+    )
+    .bind(&contract.id)
+    .fetch_all(&pool)
+    .await
+    .expect("Lecture lignes_location");
+
+    assert_eq!(lines.len(), 2, "Deux lignes créées pour le pack");
+    for line in &lines {
+        assert_eq!(line.3.as_deref(), Some(pack_id), "Le pack_id doit être tracé sur chaque ligne");
+    }
+
+    // Vérifier le statut de la variante du pack
+    let var_statut: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-003'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(var_statut.0, "reserve", "La variante du pack doit être mise à jour en 'reserve'");
+
+    // 2. Test d'atomicité : une ligne invalide (ex: conflit de date ou article inexistant) annule TOUT le contrat
+    let dto_failing = CreateRentalContractDto {
+        customer_id: "cli-002".to_string(),
+        utilisateur_id: Some("usr-001".to_string()),
+        pickup_date: "2027-02-11".to_string(), // En plein conflit avec var-003
+        return_date_scheduled: "2027-02-13".to_string(),
+        event_date: None,
+        selected_variant_ids: vec!["var-014".to_string()], // Variante valide
+        quantity_items: None,
+        pack_lines: Some(vec![
+            PackLineItemDto {
+                pack_id: pack_id.to_string(),
+                variante_id: Some("var-003".to_string()), // Conflit de date !
+                article_id: None,
+                quantite: 1,
+            },
+        ]),
+        discount_cents: None,
+        deposit_method: "especes".to_string(),
+        deposit_amount_cents: None,
+        paid_amount_cents: None,
+        payment_method: "especes".to_string(),
+        notes: None,
+    };
+
+    let fail_res = execute_create_rental(&pool, dto_failing).await;
+    assert!(fail_res.is_err(), "La création doit échouer à cause du conflit de date sur la ligne pack");
+
+    // Vérifier que var-014 n'a pas été modifiée et qu'aucune ligne orpheline n'existe
+    let v14_statut: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-014'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(v14_statut.0, "disponible", "En cas de rollback, la variante var-014 doit rester disponible");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_pack_lines_stock_lifecycle_and_return() {
+    let test_dir = std::env::temp_dir().join(format!("test_pack_return_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    let today = today_local();
+    let dto = CreateRentalContractDto {
+        customer_id: "cli-001".to_string(),
+        utilisateur_id: Some("usr-001".to_string()),
+        pickup_date: today.clone(),
+        return_date_scheduled: today.clone(),
+        event_date: None,
+        selected_variant_ids: vec![],
+        quantity_items: None,
+        pack_lines: Some(vec![
+            PackLineItemDto {
+                pack_id: "pack-cocktail-02".to_string(),
+                variante_id: Some("var-004".to_string()), // Smoking Midnight Blue 50
+                article_id: None,
+                quantite: 1,
+            },
+        ]),
+        discount_cents: None,
+        deposit_method: "especes".to_string(),
+        deposit_amount_cents: Some(50000),
+        paid_amount_cents: Some(19000),
+        payment_method: "especes".to_string(),
+        notes: Some("Pack immédiat en cours".to_string()),
+    };
+
+    let contract = execute_create_rental(&pool, dto).await.expect("Création contrat ok");
+    assert_eq!(contract.status, "en_cours");
+
+    // Vérifier que var-004 est en 'en_location'
+    let var_before: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-004'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(var_before.0, "en_location");
+
+    // Restitution de la pièce du pack
+    let return_dto = RegisterReturnDto {
+        contract_id: contract.id.clone(),
+        items: vec![
+            ReturnItemInputDto {
+                variant_id: Some("var-004".to_string()),
+                article_id: None,
+                condition: "bon_etat".to_string(),
+                damage_fee_cents: None,
+                damage_notes: None,
+            }
+        ],
+    };
+
+    let returned = execute_register_return(&pool, return_dto).await.expect("Retour réussi");
+    assert_eq!(returned.status, "retourne");
+
+    // La variante var-004 doit être libérée (repassée en disponible)
+    let var_after: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-004'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(var_after.0, "disponible", "Après restitution, la variante issue du pack doit redevenir disponible");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
 

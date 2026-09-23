@@ -1,21 +1,36 @@
-﻿import React, { useState } from "react";
+import React, { useState } from "react";
 import { usePackStore } from "@/store/packStore";
 import { useStockStore } from "@/store/stockStore";
 import { formatDA } from "@/lib/utils";
-import { Package, CheckCircle2, AlertCircle, X } from "lucide-react";
-import type { PackItemChoice } from "@/types/pack";
+import { Package, CheckCircle2, X } from "lucide-react";
+import type { PackLineInput, ReservedLine } from "@/types/pack";
 
-export const PackReservationModal: React.FC = () => {
-  const { packs, isModalOpen, setModalOpen, reservePack } = usePackStore();
+interface PackReservationModalProps {
+  /** Contrôle l'ouverture / fermeture du modal */
+  isOpen: boolean;
+  /** Appelé quand l'utilisateur ferme sans confirmer */
+  onClose: () => void;
+  /**
+   * Appelé avec les lignes résultantes quand l'utilisateur confirme.
+   * Le parent (CreateRentalModal) est responsable d'incorporer ces lignes dans
+   * le contrat avant de le soumettre. Aucun appel IPC n'est émis ici.
+   */
+  onConfirm: (lines: PackLineInput[], displayLines: ReservedLine[]) => void;
+}
+
+export const PackReservationModal: React.FC<PackReservationModalProps> = ({
+  isOpen,
+  onClose,
+  onConfirm,
+}) => {
+  const { packs } = usePackStore();
   const articles = useStockStore((s) => s.articles);
 
   const [selectedPackId, setSelectedPackId] = useState<string>(packs[0]?.pack.id || "");
   const [choices, setChoices] = useState<Record<string, { articleId?: string; variantId?: string; qty?: number }>>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [successResult, setSuccessResult] = useState<any[] | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
-  if (!isModalOpen) return null;
+  if (!isOpen) return null;
 
   const activePack = packs.find((p) => p.pack.id === selectedPackId);
 
@@ -24,51 +39,85 @@ export const PackReservationModal: React.FC = () => {
       ...prev,
       [packItemId]: { ...prev[packItemId], articleId, variantId },
     }));
+    setValidationError(null);
   };
 
-  const handleReserve = async () => {
+  const handleConfirm = () => {
     if (!activePack) return;
-    setIsSubmitting(true);
-    setErrorMessage(null);
-    setSuccessResult(null);
 
-    try {
-      const payloadChoices: PackItemChoice[] = activePack.items.map((item) => {
-        const userChoice = choices[item.id];
-        return {
-          pack_item_id: item.id,
-          article_id: item.article_id || userChoice?.articleId,
-          variante_id: userChoice?.variantId,
-          quantite: userChoice?.qty || item.quantite,
-        };
+    // Validation : tous les slots obligatoires doivent avoir un choix
+    const missingSlots = activePack.items
+      .filter((item) => item.obligatoire === 1)
+      .filter((item) => {
+        const choice = choices[item.id];
+        if (item.article_id) {
+          // Article fixe : pas de choix requis
+          return false;
+        }
+        // Slot catégorie libre : doit avoir un articleId sélectionné
+        return !choice?.articleId && !choice?.variantId;
       });
 
-      const lines = await reservePack({
-        pack_id: activePack.pack.id,
-        choices: payloadChoices,
-      });
-
-      setSuccessResult(lines);
-    } catch (err: any) {
-      setErrorMessage(err?.message || "Erreur de réservation du pack");
-    } finally {
-      setIsSubmitting(false);
+    if (missingSlots.length > 0) {
+      setValidationError(
+        `Veuillez compléter tous les éléments obligatoires du pack (${missingSlots.length} manquant${missingSlots.length > 1 ? "s" : ""}).`
+      );
+      return;
     }
+
+    // Construction des lignes à transmettre au formulaire parent
+    const packLines: PackLineInput[] = [];
+    const displayLines: ReservedLine[] = [];
+
+    for (const item of activePack.items) {
+      const userChoice = choices[item.id];
+      const resolvedArticleId = item.article_id || userChoice?.articleId;
+      const resolvedVariantId = userChoice?.variantId;
+      const qty = userChoice?.qty || item.quantite;
+
+      if (!resolvedArticleId) continue; // slot non rempli non-obligatoire
+
+      const art = articles.find((a) => a.id === resolvedArticleId);
+      const artNom = art?.name || resolvedArticleId;
+      const modeGestion: "variante" | "quantite" = resolvedVariantId ? "variante" : "quantite";
+
+      packLines.push({
+        pack_id: activePack.pack.id,
+        variante_id: resolvedVariantId || undefined,
+        article_id: modeGestion === "quantite" ? resolvedArticleId : undefined,
+        quantite: qty,
+      });
+
+      displayLines.push({
+        pack_item_id: item.id,
+        pack_id: activePack.pack.id,
+        article_id: resolvedArticleId,
+        article_nom: artNom,
+        variante_id: resolvedVariantId,
+        quantite: qty,
+        mode_gestion: modeGestion,
+      });
+    }
+
+    onConfirm(packLines, displayLines);
+    // Réinitialisation pour la prochaine ouverture
+    setChoices({});
+    setValidationError(null);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
       <div className="bg-card w-full max-w-2xl rounded-xl border border-border shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* En-tête */}
         <div className="p-4 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Package className="w-5 h-5 text-primary" />
             <h3 className="font-semibold text-base text-foreground">
-              Réservation Transactionnelle de Pack
+              Ajouter un Pack à la Location
             </h3>
           </div>
           <button
-            onClick={() => setModalOpen(false)}
+            onClick={onClose}
             className="p-1 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground"
           >
             <X className="w-5 h-5" />
@@ -89,8 +138,7 @@ export const PackReservationModal: React.FC = () => {
                   onClick={() => {
                     setSelectedPackId(p.pack.id);
                     setChoices({});
-                    setSuccessResult(null);
-                    setErrorMessage(null);
+                    setValidationError(null);
                   }}
                   className={`p-3 rounded-lg border text-left transition-all ${
                     selectedPackId === p.pack.id
@@ -138,7 +186,7 @@ export const PackReservationModal: React.FC = () => {
                           Élément #{index + 1} : {fixedArticle ? fixedArticle.name : `Slot Catégorie (${item.categorie_id})`}
                         </span>
                         <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-mono">
-                          {fixedArticle?.cleaning_fee_cents ? "Quantité" : "Variante individuelle"}
+                          {item.obligatoire === 1 ? "Obligatoire" : "Optionnel"}
                         </span>
                       </div>
 
@@ -155,6 +203,7 @@ export const PackReservationModal: React.FC = () => {
                                 ...prev,
                                 [item.id]: { articleId: artId, variantId: defaultVar?.id },
                               }));
+                              setValidationError(null);
                             }}
                           >
                             <option value="">-- Sélectionner un modèle --</option>
@@ -194,26 +243,9 @@ export const PackReservationModal: React.FC = () => {
             </div>
           )}
 
-          {errorMessage && (
-            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
-
-          {successResult && (
-            <div className="p-3.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs space-y-1">
-              <div className="font-semibold flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4" />
-                Réservation transactionnelle validée !
-              </div>
-              <ul className="list-disc list-inside space-y-0.5 pt-1 text-[11px]">
-                {successResult.map((l: any, i: number) => (
-                  <li key={i}>
-                    {l.article_nom} — {l.mode_gestion === "quantite" ? `Quantité : ${l.quantite}` : `Variante ID : ${l.variante_id}`}
-                  </li>
-                ))}
-              </ul>
+          {validationError && (
+            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-xs">
+              {validationError}
             </div>
           )}
         </div>
@@ -221,17 +253,18 @@ export const PackReservationModal: React.FC = () => {
         {/* Pied de page */}
         <div className="p-4 border-t border-border flex justify-end gap-2 bg-secondary/10">
           <button
-            onClick={() => setModalOpen(false)}
+            onClick={onClose}
             className="px-4 py-2 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-muted"
           >
-            Fermer
+            Annuler
           </button>
           <button
-            onClick={handleReserve}
-            disabled={isSubmitting || !activePack}
+            onClick={handleConfirm}
+            disabled={!activePack}
             className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
           >
-            {isSubmitting ? "Réservation en cours..." : "Confirmer la Réservation du Pack"}
+            <CheckCircle2 className="w-4 h-4" />
+            Ajouter ce Pack à la Location
           </button>
         </div>
       </div>

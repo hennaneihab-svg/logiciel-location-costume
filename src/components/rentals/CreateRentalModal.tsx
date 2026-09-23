@@ -10,6 +10,8 @@ import {
   Camera,
   Shirt,
   Eye,
+  Package,
+  Trash2,
 } from "lucide-react";
 import { formatCents, eurosToCents } from "@/lib/utils";
 import { useRentalStore } from "@/store/rentalStore";
@@ -18,10 +20,12 @@ import { useStockStore } from "@/store/stockStore";
 import { useAuthStore } from "@/store/authStore";
 import { QuickCreateClientModal } from "@/components/clients/QuickCreateClientModal";
 import { QrCameraScanner } from "@/components/common/QrCameraScanner";
+import { PackReservationModal } from "@/components/packs/PackReservationModal";
 import { photoService } from "@/services/photoService";
 import { toast } from "sonner";
 import type { CustomerDetailed } from "@/types/customer";
 import type { StockArticle, StockVariant } from "@/types/stock";
+import type { PackLineInput, ReservedLine } from "@/types/pack";
 
 export const CreateRentalModal: React.FC = () => {
   const {
@@ -56,6 +60,11 @@ export const CreateRentalModal: React.FC = () => {
 
   // Scanner QR par caméra
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  // Modal Packs
+  const [isPackModalOpen, setIsPackModalOpen] = useState(false);
+  // Lignes issues des packs sélectionnés pour ce contrat
+  const [packLines, setPackLines] = useState<PackLineInput[]>([]);
+  const [packDisplayLines, setPackDisplayLines] = useState<ReservedLine[]>([]);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // Chargement par lot des miniatures au montage ou dès que la liste d'articles change
@@ -123,6 +132,7 @@ export const CreateRentalModal: React.FC = () => {
     let cleaningTotalCents = 0;
     let defaultDepositCents = 0;
 
+    // Articles sélectionnés individuellement
     for (const varId of selectedVariantIds) {
       for (const art of articles) {
         const v = art.variants.find((item) => item.id === varId);
@@ -132,6 +142,16 @@ export const CreateRentalModal: React.FC = () => {
           defaultDepositCents += art.deposit_price_cents;
           break;
         }
+      }
+    }
+
+    // Articles issus des packs
+    for (const dl of packDisplayLines) {
+      const art = articles.find((a) => a.id === dl.article_id);
+      if (art) {
+        subtotalCents += art.rental_price_cents * rentalDays * dl.quantite;
+        cleaningTotalCents += art.cleaning_fee_cents * dl.quantite;
+        defaultDepositCents += art.deposit_price_cents * dl.quantite;
       }
     }
 
@@ -157,7 +177,7 @@ export const CreateRentalModal: React.FC = () => {
       remainingCents,
       rentalDays,
     };
-  }, [selectedVariantIds, articles, discountEuros, paymentTypeOption, customPaidEuros, rentalDays]);
+  }, [selectedVariantIds, packDisplayLines, articles, discountEuros, paymentTypeOption, customPaidEuros, rentalDays]);
 
   const handleToggleVariant = (variantId: string) => {
     if (selectedVariantIds.includes(variantId)) {
@@ -293,8 +313,9 @@ export const CreateRentalModal: React.FC = () => {
       return;
     }
 
-    if (selectedVariantIds.length === 0) {
-      toast.error("Veuillez sélectionner au moins un article ou costume.");
+    // Au moins un article individuel OU au moins une ligne de pack
+    if (selectedVariantIds.length === 0 && packLines.length === 0) {
+      toast.error("Veuillez sélectionner au moins un article ou un pack.");
       return;
     }
 
@@ -305,6 +326,7 @@ export const CreateRentalModal: React.FC = () => {
         return_date_scheduled: returnDate,
         event_date: eventDate || undefined,
         selected_variant_ids: selectedVariantIds,
+        pack_lines: packLines.length > 0 ? packLines : undefined,
         discount_cents: financialSummary.discountCents,
         deposit_method: depositMethod,
         deposit_amount_cents: financialSummary.defaultDepositCents,
@@ -486,11 +508,21 @@ export const CreateRentalModal: React.FC = () => {
                 <ShoppingBag className="w-4 h-4" />
                 <span>
                   3. Sélection des Pièces & Disponibilité en Temps Réel (
-                  {selectedVariantIds.length} sélectionnée(s))
+                  {selectedVariantIds.length + packDisplayLines.length} article(s)){packDisplayLines.length > 0 ? ` dont ${packDisplayLines.length} via pack` : ""}
                 </span>
               </label>
 
               <div className="flex items-center gap-2">
+                {/* Bouton Ajouter un Pack */}
+                <button
+                  type="button"
+                  onClick={() => setIsPackModalOpen(true)}
+                  className="h-7 px-2.5 rounded-md bg-primary/10 border border-primary/30 text-primary text-xs font-medium hover:bg-primary/20 transition-colors flex items-center gap-1.5"
+                >
+                  <Package className="w-3.5 h-3.5" />
+                  <span>+ Pack</span>
+                </button>
+
                 {/* Bouton Scanner avec la Caméra */}
                 <button
                   type="button"
@@ -513,6 +545,52 @@ export const CreateRentalModal: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* Lignes de packs sélectionnées */}
+            {packDisplayLines.length > 0 && (
+              <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-primary flex items-center gap-1.5">
+                    <Package className="w-3.5 h-3.5" />
+                    Pack sélectionné ({packDisplayLines.length} article{packDisplayLines.length > 1 ? "s" : ""})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPackLines([]);
+                      setPackDisplayLines([]);
+                    }}
+                    className="text-[10px] text-destructive hover:underline flex items-center gap-0.5"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    Retirer le pack
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {packDisplayLines.map((dl, i) => {
+                    const art = articles.find((a) => a.id === dl.article_id);
+                    return (
+                      <div key={i} className="flex items-center justify-between text-xs bg-background rounded-lg px-2.5 py-1.5 border border-border">
+                        <div>
+                          <span className="font-medium text-foreground">{dl.article_nom}</span>
+                          {dl.variante_id && (
+                            <span className="text-muted-foreground ml-1">
+                              — {art?.variants.find((v) => v.id === dl.variante_id)?.size || "Taille inconnue"}
+                            </span>
+                          )}
+                          {dl.quantite > 1 && (
+                            <span className="ml-1 text-muted-foreground">× {dl.quantite}</span>
+                          )}
+                        </div>
+                        <span className="font-semibold text-foreground font-mono text-[11px]">
+                          {art ? formatCents(art.rental_price_cents * rentalDays * dl.quantite) : "—"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Grille des pièces avec miniatures photos, test de conflit et scroll automatique */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-64 overflow-y-auto pr-1">
@@ -924,6 +1002,18 @@ export const CreateRentalModal: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Modal Sélection de Pack */}
+      <PackReservationModal
+        isOpen={isPackModalOpen}
+        onClose={() => setIsPackModalOpen(false)}
+        onConfirm={(lines, displayLines) => {
+          setPackLines(lines);
+          setPackDisplayLines(displayLines);
+          setIsPackModalOpen(false);
+          toast.success(`Pack ajouté : ${displayLines.length} article(s) inclus dans la location.`);
+        }}
+      />
 
       {/* Modal Scanner QR par Caméra */}
       <QrCameraScanner

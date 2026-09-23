@@ -1,4 +1,4 @@
-﻿export interface PackItem {
+export interface PackItem {
   id: string;
   pack_id: string;
   categorie_id: string;
@@ -34,11 +34,25 @@ export interface ReservePackInput {
   choices: PackItemChoice[];
 }
 
+/** Résultat de la sélection d'un pack — chaque slot du pack génère une ReservedLine */
 export interface ReservedLine {
   pack_item_id: string;
+  pack_id: string;           // ID du pack parent (pour la traçabilité)
   article_id: string;
   article_nom: string;
   variante_id?: string;
   quantite: number;
   mode_gestion: "variante" | "quantite";
 }
+
+/**
+ * Format transmis à createRentalContract pour les lignes issues de packs.
+ * Correspond exactement à PackLineItemDto côté Rust.
+ */
+export interface PackLineInput {
+  pack_id: string;
+  variante_id?: string;
+  article_id?: string;
+  quantite: number;
+}
+

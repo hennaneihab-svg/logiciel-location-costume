@@ -300,6 +300,7 @@ async fn test_mark_pressing_problem_blocks_rental() {
         event_date: None,
         selected_variant_ids: vec!["var-011".to_string()],
         quantity_items: None,
+        pack_lines: None,
         discount_cents: None,
         deposit_method: "empreinte_cb".to_string(),
         deposit_amount_cents: Some(45000),

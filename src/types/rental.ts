@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // TYPES MODULE C & D — LOCATIONS, RÉSERVATIONS & BONS PDF
 // ============================================================================
 
@@ -88,6 +88,8 @@ export interface NewRentalFormInput {
   return_date_scheduled: string;
   event_date?: string;
   selected_variant_ids: string[];
+  /** Lignes issues de packs — chaque ligne porte son pack_id pour la traçabilité SQLite */
+  pack_lines?: import("@/types/pack").PackLineInput[];
   discount_cents: number;
   deposit_method: "empreinte_cb" | "cheque" | "especes" | "virement";
   deposit_amount_cents: number;

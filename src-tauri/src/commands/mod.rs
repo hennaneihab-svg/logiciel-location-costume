@@ -658,7 +658,10 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
     if dto.pickup_date > dto.return_date_scheduled {
         return Err(AppError::Validation("La date de retour doit être postérieure ou égale à la date de retrait".to_string()));
     }
-    if dto.selected_variant_ids.is_empty() && dto.quantity_items.as_ref().map_or(true, |q| q.is_empty()) {
+    let has_variants = !dto.selected_variant_ids.is_empty();
+    let has_quantity = dto.quantity_items.as_ref().map_or(false, |q| !q.is_empty());
+    let has_pack_lines = dto.pack_lines.as_ref().map_or(false, |p| !p.is_empty());
+    if !has_variants && !has_quantity && !has_pack_lines {
         return Err(AppError::Validation("Veuillez sélectionner au moins un article pour le contrat".to_string()));
     }
 
@@ -783,6 +786,7 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
                 format!("lig-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)),
                 Some(var_id.clone()),
                 Some(art_id),
+                None::<String>,  // pack_id : NULL pour les variantes hors-pack
                 1i64,
                 item_total,
                 caution,
@@ -838,11 +842,159 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
                     format!("lig-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)),
                     None,
                     Some(q_item.article_id.clone()),
+                    None::<String>,       // pack_id : NULL pour les lignes hors-pack
                     q_item.quantite,
                     line_total,
                     line_caution,
                     "bon".to_string(),
                 ));
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────────
+        // Traitement des lignes issues de packs (dto.pack_lines)
+        // Chaque PackLineItemDto porte son pack_id pour la traçabilité dans
+        // lignes_location.pack_id. Le chemin est identique aux variantes libres
+        // et aux articles en quantité, mais avec pack_id renseigné.
+        // ──────────────────────────────────────────────────────────────────────────
+        if let Some(pack_lines) = &dto.pack_lines {
+            for pl in pack_lines {
+                if pl.quantite <= 0 {
+                    return Err(AppError::Validation("La quantité d'une ligne pack doit être strictement positive.".to_string()));
+                }
+
+                if let Some(var_id) = &pl.variante_id {
+                    // ── Mode variante : vérification statut + conflit dates ──
+                    let row = sqlx::query(
+                        "SELECT v.id as var_id, v.article_id, v.statut as var_statut, v.etat_usure,
+                                a.nom as art_nom, a.prix_location_centimes, a.caution_suggeree_centimes, a.frais_nettoyage_centimes
+                         FROM variantes_stock v
+                         JOIN articles a ON v.article_id = a.id
+                         WHERE v.id = ?"
+                    )
+                    .bind(var_id)
+                    .fetch_optional(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?
+                    .ok_or_else(|| AppError::Validation(format!("Variante pack introuvable : {}", var_id)))?;
+
+                    let art_nom: String = row.get("art_nom");
+                    let var_statut: String = row.get("var_statut");
+                    let art_id: String = row.get("article_id");
+                    let prix_loc: i64 = row.get("prix_location_centimes");
+                    let caution: i64 = row.get("caution_suggeree_centimes");
+                    let cleaning: i64 = row.get("frais_nettoyage_centimes");
+                    let etat_usure: String = row.get::<Option<String>, _>("etat_usure").unwrap_or_else(|| "excellent".to_string());
+
+                    if var_statut == "au_pressing" {
+                        return Err(AppError::Validation(format!("Article pack '{}' est actuellement au pressing.", art_nom)));
+                    }
+                    if var_statut == "en_retouche" || var_statut == "indisponible" || var_statut == "vendu" {
+                        return Err(AppError::Validation(format!("Article pack '{}' est indisponible.", art_nom)));
+                    }
+
+                    let conflict = sqlx::query(
+                        "SELECT l.numero_location, c.prenom, c.nom, l.date_retrait_prevue, l.date_retour_prevue
+                         FROM lignes_location ll
+                         JOIN locations l ON ll.location_id = l.id
+                         JOIN clients c ON l.client_id = c.id
+                         WHERE ll.variante_id = ?
+                           AND ll.est_rendu = 0
+                           AND l.statut IN ('reserve', 'en_cours', 'en_retard', 'litige')
+                           AND l.date_retrait_prevue <= ?
+                           AND l.date_retour_prevue >= ?
+                         LIMIT 1"
+                    )
+                    .bind(var_id)
+                    .bind(&dto.return_date_scheduled)
+                    .bind(&dto.pickup_date)
+                    .fetch_optional(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+
+                    if let Some(c_row) = conflict {
+                        let num_loc: String = c_row.get("numero_location");
+                        let c_nom: String = c_row.get("nom");
+                        let c_prenom: String = c_row.get("prenom");
+                        let c_start: String = c_row.get("date_retrait_prevue");
+                        let c_end: String = c_row.get("date_retour_prevue");
+                        return Err(AppError::Validation(format!(
+                            "Conflit de date pour l'article pack '{}' avec le contrat {} ({} {}) du {} au {}.",
+                            art_nom, num_loc, c_prenom, c_nom, c_start, c_end
+                        )));
+                    }
+
+                    let item_total = prix_loc * duration_days;
+                    total_rental_cents += item_total;
+                    cleaning_fee_total_cents += cleaning;
+                    default_deposit_cents += caution;
+
+                    lines_to_insert.push((
+                        format!("lig-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)),
+                        Some(var_id.clone()),
+                        Some(art_id),
+                        Some(pl.pack_id.clone()),  // pack_id tracé
+                        1i64,
+                        item_total,
+                        caution,
+                        etat_usure,
+                    ));
+
+                } else if let Some(art_id) = &pl.article_id {
+                    // ── Mode quantité : décrémente le stock ──
+                    let art_row = sqlx::query(
+                        "SELECT id, nom, prix_location_centimes, caution_suggeree_centimes, frais_nettoyage_centimes, quantite_disponible
+                         FROM articles WHERE id = ? AND est_actif = 1"
+                    )
+                    .bind(art_id)
+                    .fetch_optional(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?
+                    .ok_or_else(|| AppError::Validation(format!("Article pack introuvable : {}", art_id)))?;
+
+                    let art_nom: String = art_row.get("nom");
+                    let prix_loc: i64 = art_row.get("prix_location_centimes");
+                    let caution: i64 = art_row.get("caution_suggeree_centimes");
+                    let cleaning: i64 = art_row.get("frais_nettoyage_centimes");
+
+                    let upd_res = sqlx::query(
+                        "UPDATE articles
+                         SET quantite_disponible = quantite_disponible - ?, updated_at = ?
+                         WHERE id = ? AND quantite_disponible >= ?"
+                    )
+                    .bind(pl.quantite)
+                    .bind(&now)
+                    .bind(art_id)
+                    .bind(pl.quantite)
+                    .execute(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+
+                    if upd_res.rows_affected() == 0 {
+                        return Err(AppError::Validation(format!("Stock insuffisant pour l'article pack '{}'.", art_nom)));
+                    }
+
+                    let line_total = (prix_loc * duration_days) * pl.quantite;
+                    let line_caution = caution * pl.quantite;
+                    total_rental_cents += line_total;
+                    cleaning_fee_total_cents += cleaning * pl.quantite;
+                    default_deposit_cents += line_caution;
+
+                    lines_to_insert.push((
+                        format!("lig-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)),
+                        None,
+                        Some(art_id.clone()),
+                        Some(pl.pack_id.clone()),  // pack_id tracé
+                        pl.quantite,
+                        line_total,
+                        line_caution,
+                        "bon".to_string(),
+                    ));
+                } else {
+                    return Err(AppError::Validation(
+                        "Une ligne pack doit avoir au moins variante_id ou article_id.".to_string()
+                    ));
+                }
             }
         }
 
@@ -898,18 +1050,19 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
         for line in lines_to_insert {
             sqlx::query(
                 "INSERT INTO lignes_location (
-                    id, location_id, variante_id, article_id, quantite, type_ligne,
+                    id, location_id, variante_id, article_id, pack_id, quantite, type_ligne,
                     prix_unitaire_centimes, caution_centimes, etat_depart, est_rendu
-                ) VALUES (?, ?, ?, ?, ?, 'location', ?, ?, ?, 0)"
+                ) VALUES (?, ?, ?, ?, ?, ?, 'location', ?, ?, ?, 0)"
             )
-            .bind(&line.0)
-            .bind(&location_id)
-            .bind(&line.1)
-            .bind(&line.2)
-            .bind(line.3)
-            .bind(line.4)
-            .bind(line.5)
-            .bind(&line.6)
+            .bind(&line.0)              // id
+            .bind(&location_id)         // location_id
+            .bind(&line.1)              // variante_id (Option)
+            .bind(&line.2)              // article_id (Option)
+            .bind(&line.3)              // pack_id (Option)
+            .bind(line.4)               // quantite
+            .bind(line.5)               // prix_unitaire_centimes
+            .bind(line.6)               // caution_centimes
+            .bind(&line.7)              // etat_depart
             .execute(&mut *tx.conn)
             .await
             .map_err(map_sqlite_err)?;
@@ -918,6 +1071,14 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
         // Recalcul dynamique du statut de chaque variante selon la règle B0-2
         for var_id in &dto.selected_variant_ids {
             recompute_variant_status(&mut *tx.conn, var_id).await?;
+        }
+        // Idem pour les variantes issues de packs
+        if let Some(ref pack_lines) = dto.pack_lines {
+            for pl in pack_lines {
+                if let Some(ref var_id) = pl.variante_id {
+                    recompute_variant_status(&mut *tx.conn, var_id).await?;
+                }
+            }
         }
 
         if paid_cents > 0 {

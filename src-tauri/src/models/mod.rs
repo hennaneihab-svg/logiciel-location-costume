@@ -260,6 +260,20 @@ pub struct RentalQuantityItemInput {
     pub quantite: i64,
 }
 
+/// Ligne issue d'un pack (résultat de la sélection PackReservationModal côté frontend).
+/// Chaque slot du pack produit une PackLineItemDto distincte, toutes rattachées au même pack_id.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PackLineItemDto {
+    /// ID du pack auquel cette ligne appartient (tracé dans lignes_location.pack_id)
+    pub pack_id: String,
+    /// ID de la variante choisie (mode_gestion = 'variante')
+    pub variante_id: Option<String>,
+    /// ID de l'article (mode_gestion = 'quantite', sans variante individuelle)
+    pub article_id: Option<String>,
+    /// Quantité demandée (1 pour les variantes unitaires, >1 pour accessoires en vrac)
+    pub quantite: i64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateRentalContractDto {
     pub customer_id: String,
@@ -269,6 +283,8 @@ pub struct CreateRentalContractDto {
     pub event_date: Option<String>,
     pub selected_variant_ids: Vec<String>,
     pub quantity_items: Option<Vec<RentalQuantityItemInput>>,
+    /// Lignes issues de packs — chaque ligne porte son pack_id pour la traçabilité
+    pub pack_lines: Option<Vec<PackLineItemDto>>,
     pub discount_cents: Option<i64>,
     pub deposit_method: String,
     pub deposit_amount_cents: Option<i64>,
