@@ -81,6 +81,8 @@ const mockContracts: RentalContract[] = [
     deposit_method: "empreinte_cb",
     payment_method: "carte_bancaire",
     discount_cents: 0,
+    created_at: "2026-09-01T10:00:00Z",
+    updated_at: "2026-09-01T10:00:00Z",
     items: [
       {
         variant_id: "var-test-01",
@@ -118,6 +120,8 @@ const mockContracts: RentalContract[] = [
     deposit_method: "cheque",
     payment_method: "carte_bancaire",
     discount_cents: 0,
+    created_at: "2026-09-01T10:00:00Z",
+    updated_at: "2026-09-01T10:00:00Z",
     items: [],
   },
 ];
