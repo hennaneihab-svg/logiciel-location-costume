@@ -4,6 +4,7 @@ import {
   Plus,
   Calendar as CalendarIcon,
   Table as TableIcon,
+  Grid3X3,
   Clock,
   AlertTriangle,
   DollarSign,
@@ -15,11 +16,12 @@ import { RentalTableView } from "@/components/rentals/RentalTableView";
 import { CreateRentalModal } from "@/components/rentals/CreateRentalModal";
 import { PdfPreviewModal } from "@/components/rentals/PdfPreviewModal";
 import { ReturnProcessModal } from "@/components/rentals/ReturnProcessModal";
+import { AvailabilityMatrix } from "@/components/matrix/AvailabilityMatrix";
 
 export const LocationsPage: React.FC = () => {
   const { contracts, setCreateRentalModalOpen, searchQuery } = useRentalStore();
-  const [activeTab, setActiveTab] = useState<"calendar" | "table">(
-    searchQuery ? "table" : "calendar"
+  const [activeTab, setActiveTab] = useState<"calendar" | "table" | "matrix">(
+    searchQuery ? "table" : "matrix"
   );
 
   React.useEffect(() => {
@@ -142,6 +144,19 @@ export const LocationsPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={() => setActiveTab("matrix")}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+              activeTab === "matrix"
+                ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                : "bg-secondary/40 text-muted-foreground hover:text-foreground border-border hover:bg-secondary"
+            }`}
+          >
+            <Grid3X3 className="w-3.5 h-3.5" />
+            <span>Matrice de Disponibilité</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab("calendar")}
             className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
               activeTab === "calendar"
@@ -175,7 +190,9 @@ export const LocationsPage: React.FC = () => {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.15 }}
       >
-        {activeTab === "calendar" ? (
+        {activeTab === "matrix" ? (
+          <AvailabilityMatrix />
+        ) : activeTab === "calendar" ? (
           <RentalCalendarView />
         ) : (
           <RentalTableView />
