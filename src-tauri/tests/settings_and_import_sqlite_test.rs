@@ -325,3 +325,235 @@ async fn test_import_legacy_localstorage_and_duplicate_prevention() {
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[tokio::test]
+async fn test_partial_import_error_handling_and_retry() {
+    let test_dir = std::env::temp_dir().join(format!("test_partial_import_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Init db ok");
+
+    // 0. Vérification du flag initial
+    let init_flag: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'local_storage_migrated'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(init_flag.0, "0", "Flag initialement à 0");
+
+    // 1. Payload contenant une ligne valide et une ligne volontairement invalide (contrat sans client)
+    let payload_with_error = LegacyImportPayload {
+        contracts: Some(vec![
+            // Ligne valide 1
+            LegacyRentalContract {
+                id: "loc-valid-001".to_string(),
+                contract_number: "LOC-2025-VALID".to_string(),
+                customer_id: "cli-valid-001".to_string(),
+                customer_name: Some("Client Valide".to_string()),
+                customer_phone: Some("0600112233".to_string()),
+                customer_email: None,
+                customer_address: None,
+                customer_cni: None,
+                status: "en_cours".to_string(),
+                event_date: None,
+                pickup_date: "2025-12-01".to_string(),
+                return_date_scheduled: "2025-12-05".to_string(),
+                return_date_actual: None,
+                items: vec![
+                    LegacyRentalItem {
+                        variant_id: "var-001".to_string(),
+                        article_id: Some("art-001".to_string()),
+                        unit_price_cents: 15000,
+                        deposit_cents: Some(30000),
+                        cleaning_fee_cents: None,
+                        pickup_condition: Some("excellent".to_string()),
+                        return_condition: None,
+                        damage_fee_cents: None,
+                        damage_notes: None,
+                        is_returned: Some(false),
+                        return_date: None,
+                    }
+                ],
+                total_rental_cents: Some(15000),
+                cleaning_fee_cents: None,
+                discount_cents: None,
+                late_fee_cents: None,
+                damage_fee_cents: None,
+                total_amount_cents: 15000,
+                deposit_amount_cents: Some(30000),
+                deposit_status: Some("non_recue".to_string()),
+                deposit_method: None,
+                deposit_notes: None,
+                paid_amount_cents: Some(15000),
+                payment_method: Some("especes".to_string()),
+                remaining_amount_cents: Some(0),
+                notes: None,
+                created_at: Some("2025-11-20T10:00:00.000Z".to_string()),
+                updated_at: Some("2025-11-20T10:00:00.000Z".to_string()),
+            },
+            // Ligne INVALIDE (sans client : customer_id vide)
+            LegacyRentalContract {
+                id: "loc-err-002".to_string(),
+                contract_number: "LOC-2025-ERR".to_string(),
+                customer_id: "   ".to_string(), // Client manquant / vide
+                customer_name: None,
+                customer_phone: None,
+                customer_email: None,
+                customer_address: None,
+                customer_cni: None,
+                status: "en_cours".to_string(),
+                event_date: None,
+                pickup_date: "2025-12-01".to_string(),
+                return_date_scheduled: "2025-12-05".to_string(),
+                return_date_actual: None,
+                items: vec![
+                    LegacyRentalItem {
+                        variant_id: "var-001".to_string(),
+                        article_id: Some("art-001".to_string()),
+                        unit_price_cents: 10000,
+                        deposit_cents: Some(20000),
+                        cleaning_fee_cents: None,
+                        pickup_condition: Some("excellent".to_string()),
+                        return_condition: None,
+                        damage_fee_cents: None,
+                        damage_notes: None,
+                        is_returned: Some(false),
+                        return_date: None,
+                    }
+                ],
+                total_rental_cents: Some(10000),
+                cleaning_fee_cents: None,
+                discount_cents: None,
+                late_fee_cents: None,
+                damage_fee_cents: None,
+                total_amount_cents: 10000,
+                deposit_amount_cents: Some(20000),
+                deposit_status: Some("non_recue".to_string()),
+                deposit_method: None,
+                deposit_notes: None,
+                paid_amount_cents: None,
+                payment_method: None,
+                remaining_amount_cents: Some(10000),
+                notes: None,
+                created_at: Some("2025-11-20T10:00:00.000Z".to_string()),
+                updated_at: Some("2025-11-20T10:00:00.000Z".to_string()),
+            },
+        ]),
+        sales: Some(vec![
+            LegacyDirectSale {
+                id: "vte-valid-001".to_string(),
+                sale_number: "VTE-2025-0099".to_string(),
+                customer_id: None,
+                customer_name: Some("Client Passager".to_string()),
+                user_id: Some("usr-001".to_string()),
+                total_amount_cents: 5000,
+                payment: Some(LegacySalePayment {
+                    method: "carte_bancaire".to_string(),
+                    amount_paid_cents: 5000,
+                    transaction_ref: Some("CB-999".to_string()),
+                }),
+                items: vec![
+                    LegacySaleItem {
+                        id: Some("item-vte-val-1".to_string()),
+                        article_id: "art-001".to_string(),
+                        variant_id: Some("var-001".to_string()),
+                        quantity: Some(1),
+                        unit_price_cents: 5000,
+                        subtotal_cents: Some(5000),
+                    }
+                ],
+                notes: None,
+                created_at: Some("2025-11-20T10:30:00.000Z".to_string()),
+            }
+        ]),
+    };
+
+    // Premier import partiel
+    let rep1 = execute_import_legacy_localstorage(&pool, payload_with_error.clone()).await.unwrap();
+
+    assert_eq!(rep1.locations_imported, 1, "La ligne valide a bien été importée");
+    assert_eq!(rep1.locations_skipped_duplicates, 0);
+    assert_eq!(rep1.ventes_imported, 1, "La vente valide a bien été importée");
+    assert_eq!(rep1.errors.len(), 1, "1 erreur constatée sur la ligne sans client");
+    assert!(rep1.errors[0].contains("client"), "Message d'erreur explicite sur le client manquant");
+
+    // Vérifier les données présentes en base
+    let count_valid: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM locations WHERE id = 'loc-valid-001'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count_valid.0, 1, "Le contrat valide est bien persisté dans SQLite");
+
+    let count_err: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM locations WHERE id = 'loc-err-002'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count_err.0, 0, "Le contrat en erreur n'a PAS été persisté");
+
+    let count_sale: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM ventes WHERE id = 'vte-valid-001'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count_sale.0, 1, "La vente est bien persistée");
+
+    // Vérifier le flag : il doit être à 'partial' et surtout PAS à '1'
+    let flag_after_partial: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'local_storage_migrated'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(flag_after_partial.0, "partial", "Le flag est à 'partial' car il y a eu une erreur");
+    assert_ne!(flag_after_partial.0, "1", "Le flag ne doit PAS être à '1'");
+
+    // 2. Second passage avec le MÊME payload (retente la ligne en erreur, ne duplique pas les valides)
+    let rep2 = execute_import_legacy_localstorage(&pool, payload_with_error.clone()).await.unwrap();
+
+    assert_eq!(rep2.locations_imported, 0, "Aucune nouvelle location valide");
+    assert_eq!(rep2.locations_skipped_duplicates, 1, "La location valide déjà présente est ignorée (aucun doublon)");
+    assert_eq!(rep2.ventes_imported, 0);
+    assert_eq!(rep2.ventes_skipped_duplicates, 1, "La vente valide déjà présente est ignorée (aucun doublon)");
+    assert_eq!(rep2.errors.len(), 1, "La ligne en erreur a été retentée et ré-échoue");
+
+    // Le flag reste à 'partial'
+    let flag_after_rep2: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'local_storage_migrated'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(flag_after_rep2.0, "partial");
+
+    // Toujours exactement 1 location de notre lot en base
+    let count_loc_total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM locations WHERE id IN ('loc-valid-001', 'loc-err-002')")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count_loc_total.0, 1);
+
+    // 3. Troisième passage où le contrat en erreur a été corrigé (client renseigné)
+    let mut payload_fixed = payload_with_error.clone();
+    let mut contracts = payload_fixed.contracts.unwrap();
+    contracts[1].customer_id = "cli-fixed-002".to_string();
+    contracts[1].customer_name = Some("Client Corrigé".to_string());
+    payload_fixed.contracts = Some(contracts);
+
+    let rep3 = execute_import_legacy_localstorage(&pool, payload_fixed).await.unwrap();
+
+    assert_eq!(rep3.locations_imported, 1, "Le contrat précédemment en erreur est maintenant importé avec succès");
+    assert_eq!(rep3.locations_skipped_duplicates, 1, "Le contrat valide déjà importé n'est toujours pas dupliqué");
+    assert_eq!(rep3.ventes_skipped_duplicates, 1, "La vente déjà importée n'est pas dupliquée");
+    assert!(rep3.errors.is_empty(), "Plus aucune erreur");
+
+    // Cette fois le flag passe à '1' !
+    let flag_final: (String,) = sqlx::query_as("SELECT valeur FROM app_meta WHERE cle = 'local_storage_migrated'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(flag_final.0, "1", "Flag local_storage_migrated maintenant à 1");
+
+    // Total en base pour notre lot : exactement 2 locations
+    let count_final: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM locations WHERE id IN ('loc-valid-001', 'loc-err-002')")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count_final.0, 2, "Les 2 locations sont en base sans aucun doublon");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}

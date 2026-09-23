@@ -152,8 +152,338 @@ pub async fn execute_get_all_settings(pool: &SqlitePool) -> Result<HashMap<Strin
 }
 
 // ============================================================================
+// ============================================================================
 // LOGIQUE MÉTIER PURE POUR L'IMPORTATION HISTORIQUE SANS DOUBLON
 // ============================================================================
+
+async fn try_import_contract(
+    conn: &mut sqlx::SqliteConnection,
+    c: &LegacyRentalContract,
+    now: &str,
+) -> Result<(usize, usize, usize, usize), String> {
+    if c.customer_id.trim().is_empty() {
+        return Err("aucun client associé (customer_id manquant)".to_string());
+    }
+    if c.id.trim().is_empty() {
+        return Err("identifiant de contrat manquant".to_string());
+    }
+    if c.contract_number.trim().is_empty() {
+        return Err("numéro de contrat manquant".to_string());
+    }
+
+    // Vérifier/Créer le client pour satisfaire la contrainte de clé étrangère
+    let client_exists: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1 FROM clients WHERE id = ?"
+    )
+    .bind(&c.customer_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|e| format!("erreur vérification client: {}", e))?;
+
+    if client_exists.is_none() {
+        let prenom = c.customer_name.clone().unwrap_or_else(|| "Client".to_string());
+        let nom = "Historique".to_string();
+        let tel = c.customer_phone.clone().unwrap_or_else(|| "0000000000".to_string());
+        let created = c.created_at.clone().unwrap_or_else(|| now.to_string());
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO clients (id, prenom, nom, telephone, email, adresse, numero_cni, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&c.customer_id)
+        .bind(prenom)
+        .bind(nom)
+        .bind(tel)
+        .bind(&c.customer_email)
+        .bind(&c.customer_address)
+        .bind(&c.customer_cni)
+        .bind(&created)
+        .bind(&created)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| format!("erreur insertion client: {}", e))?;
+    }
+
+    // Utilisateur responsable (par défaut 'usr-001')
+    let user_id = "usr-001";
+
+    let statut_valid = match c.status.as_str() {
+        "brouillon" | "reserve" | "en_cours" | "retourne" | "en_retard" | "litige" | "annule" => c.status.clone(),
+        _ => "en_cours".to_string(),
+    };
+
+    let statut_caution_valid = match c.deposit_status.as_deref() {
+        Some("non_recue") | Some("encaissee") | Some("empreinte_cb") | Some("cheque_retenu")
+        | Some("restituee") | Some("conservee_partiellement") | Some("conservee_totalement") => {
+            c.deposit_status.clone().unwrap()
+        }
+        _ => "non_recue".to_string(),
+    };
+
+    let created_date = c.created_at.clone().unwrap_or_else(|| now.to_string());
+    let updated_date = c.updated_at.clone().unwrap_or_else(|| created_date.clone());
+
+    sqlx::query(
+        "INSERT INTO locations (
+            id, numero_location, client_id, utilisateur_id, statut,
+            date_evenement, date_retrait_prevue, date_retrait_effective,
+            date_retour_prevue, date_retour_effective, montant_total_ht_centimes,
+            tva_taux, montant_total_ttc_centimes, frais_nettoyage_centimes,
+            frais_retard_centimes, frais_degradation_centimes, remise_centimes,
+            montant_caution_centimes, statut_caution, notes_caution, notes,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 19.0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(&c.id)
+    .bind(&c.contract_number)
+    .bind(&c.customer_id)
+    .bind(user_id)
+    .bind(statut_valid)
+    .bind(&c.event_date)
+    .bind(&c.pickup_date)
+    .bind(&c.pickup_date) // date_retrait_effective
+    .bind(&c.return_date_scheduled)
+    .bind(&c.return_date_actual)
+    .bind(c.total_rental_cents.unwrap_or(c.total_amount_cents))
+    .bind(c.total_amount_cents)
+    .bind(c.cleaning_fee_cents.unwrap_or(0))
+    .bind(c.late_fee_cents.unwrap_or(0))
+    .bind(c.damage_fee_cents.unwrap_or(0))
+    .bind(c.discount_cents.unwrap_or(0))
+    .bind(c.deposit_amount_cents.unwrap_or(0))
+    .bind(statut_caution_valid)
+    .bind(&c.deposit_notes)
+    .bind(&c.notes)
+    .bind(&created_date)
+    .bind(&updated_date)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| format!("erreur insertion location: {}", e))?;
+
+    // Lignes de location
+    let mut lignes_added = 0;
+    for (idx, item) in c.items.iter().enumerate() {
+        // S'assurer que la variante existe
+        let var_exists: Option<(i64,)> = sqlx::query_as(
+            "SELECT 1 FROM variantes_stock WHERE id = ?"
+        )
+        .bind(&item.variant_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| format!("erreur vérification variante {}: {}", item.variant_id, e))?;
+
+        if var_exists.is_none() {
+            // Récupérer un article valide pour ancrer la variante
+            let art_id: Option<(String,)> = sqlx::query_as(
+                "SELECT id FROM articles LIMIT 1"
+            )
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| format!("erreur recherche article: {}", e))?;
+
+            if let Some((valid_art_id,)) = art_id {
+                let barcode = format!("BAR-IMP-{}", &item.variant_id);
+                sqlx::query(
+                    "INSERT OR IGNORE INTO variantes_stock (id, article_id, code_barre, taille, etat_usure, statut, created_at, updated_at)
+                     VALUES (?, ?, ?, 'Standard', 'bon', 'disponible', ?, ?)"
+                )
+                .bind(&item.variant_id)
+                .bind(valid_art_id)
+                .bind(barcode)
+                .bind(&created_date)
+                .bind(&created_date)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| format!("erreur insertion variante {}: {}", item.variant_id, e))?;
+            }
+        }
+
+        let ligne_id = format!("lign-{}-{}", &c.id, idx);
+        let is_rendu = if item.is_returned.unwrap_or(false) { 1 } else { 0 };
+
+        sqlx::query(
+            "INSERT INTO lignes_location (
+                id, location_id, variante_id, type_ligne, prix_unitaire_centimes,
+                caution_centimes, etat_depart, etat_retour, est_rendu, date_retour, notes
+            ) VALUES (?, ?, ?, 'location', ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&ligne_id)
+        .bind(&c.id)
+        .bind(&item.variant_id)
+        .bind(item.unit_price_cents)
+        .bind(item.deposit_cents.unwrap_or(0))
+        .bind(item.pickup_condition.as_deref().unwrap_or("excellent"))
+        .bind(item.return_condition.as_deref())
+        .bind(is_rendu)
+        .bind(&item.return_date)
+        .bind(&item.damage_notes)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| format!("erreur insertion ligne_location {}: {}", ligne_id, e))?;
+
+        lignes_added += 1;
+    }
+
+    // Paiement associé à la location
+    let mut paiements_added = 0;
+    let mut paiements_skipped = 0;
+    if let Some(paid) = c.paid_amount_cents {
+        if paid > 0 {
+            let pay_id = format!("pay-loc-{}", &c.id);
+            let pay_exists: Option<(i64,)> = sqlx::query_as(
+                "SELECT 1 FROM paiements WHERE id = ?"
+            )
+            .bind(&pay_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| format!("erreur vérification paiement {}: {}", pay_id, e))?;
+
+            if pay_exists.is_none() {
+                let pay_method = match c.payment_method.as_deref() {
+                    Some("especes") | Some("carte_bancaire") | Some("cheque") | Some("virement") => {
+                        c.payment_method.clone().unwrap()
+                    }
+                    _ => "especes".to_string(),
+                };
+
+                sqlx::query(
+                    "INSERT INTO paiements (
+                        id, location_id, vente_id, utilisateur_id, montant_centimes,
+                        type_paiement, moyen_paiement, notes, date_paiement
+                    ) VALUES (?, ?, NULL, ?, ?, 'solde', ?, 'Paiement import historique', ?)"
+                )
+                .bind(&pay_id)
+                .bind(&c.id)
+                .bind(user_id)
+                .bind(paid)
+                .bind(pay_method)
+                .bind(&created_date)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| format!("erreur insertion paiement {}: {}", pay_id, e))?;
+
+                paiements_added += 1;
+            } else {
+                paiements_skipped += 1;
+            }
+        }
+    }
+
+    Ok((1, lignes_added, paiements_added, paiements_skipped))
+}
+
+async fn try_import_sale(
+    conn: &mut sqlx::SqliteConnection,
+    s: &LegacyDirectSale,
+    now: &str,
+) -> Result<(usize, usize, usize, usize), String> {
+    if s.id.trim().is_empty() {
+        return Err("identifiant de vente manquant".to_string());
+    }
+    if s.sale_number.trim().is_empty() {
+        return Err("numéro de vente manquant".to_string());
+    }
+
+    let user_id = s.user_id.clone().unwrap_or_else(|| "usr-001".to_string());
+    let created_date = s.created_at.clone().unwrap_or_else(|| now.to_string());
+    let moyen_paiement = s.payment.as_ref()
+        .map(|p| p.method.clone())
+        .unwrap_or_else(|| "especes".to_string());
+
+    let moyen_valid = match moyen_paiement.as_str() {
+        "especes" | "carte_bancaire" | "cheque" | "virement" | "autre" => moyen_paiement,
+        _ => "especes".to_string(),
+    };
+
+    sqlx::query(
+        "INSERT INTO ventes (
+            id, numero_vente, client_id, utilisateur_id, montant_total_centimes,
+            moyen_paiement, statut, notes, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'completee', ?, ?)"
+    )
+    .bind(&s.id)
+    .bind(&s.sale_number)
+    .bind(&s.customer_id)
+    .bind(&user_id)
+    .bind(s.total_amount_cents)
+    .bind(moyen_valid)
+    .bind(&s.notes)
+    .bind(&created_date)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| format!("erreur insertion vente: {}", e))?;
+
+    let mut lignes_added = 0;
+    for (idx, item) in s.items.iter().enumerate() {
+        let ligne_id = item.id.clone().unwrap_or_else(|| format!("lign-vte-{}-{}", &s.id, idx));
+        let qty = item.quantity.unwrap_or(1);
+        let subtotal = item.subtotal_cents.unwrap_or(item.unit_price_cents * qty);
+
+        sqlx::query(
+            "INSERT INTO lignes_vente (
+                id, vente_id, article_id, variante_id, quantite,
+                prix_unitaire_centimes, total_centimes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&ligne_id)
+        .bind(&s.id)
+        .bind(&item.article_id)
+        .bind(&item.variant_id)
+        .bind(qty)
+        .bind(item.unit_price_cents)
+        .bind(subtotal)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| format!("erreur insertion ligne_vente {}: {}", ligne_id, e))?;
+
+        lignes_added += 1;
+    }
+
+    let mut paies_added = 0;
+    let mut paies_skipped = 0;
+    if let Some(payment) = &s.payment {
+        if payment.amount_paid_cents > 0 {
+            let pay_id = format!("pay-vte-{}", &s.id);
+            let pay_exists: Option<(i64,)> = sqlx::query_as(
+                "SELECT 1 FROM paiements WHERE id = ?"
+            )
+            .bind(&pay_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| format!("erreur vérification paiement vente {}: {}", pay_id, e))?;
+
+            if pay_exists.is_none() {
+                let moyen_paiement = match payment.method.as_str() {
+                    "especes" | "carte_bancaire" | "cheque" | "virement" | "autre" => payment.method.clone(),
+                    _ => "especes".to_string(),
+                };
+
+                sqlx::query(
+                    "INSERT INTO paiements (
+                        id, location_id, vente_id, utilisateur_id, montant_centimes,
+                        type_paiement, moyen_paiement, reference_transaction, notes, date_paiement
+                    ) VALUES (?, NULL, ?, ?, ?, 'vente_directe', ?, ?, 'Paiement vente import historique', ?)"
+                )
+                .bind(&pay_id)
+                .bind(&s.id)
+                .bind(&user_id)
+                .bind(payment.amount_paid_cents)
+                .bind(moyen_paiement)
+                .bind(&payment.transaction_ref)
+                .bind(&created_date)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| format!("erreur insertion paiement vente {}: {}", pay_id, e))?;
+
+                paies_added += 1;
+            } else {
+                paies_skipped += 1;
+            }
+        }
+    }
+
+    Ok((1, lignes_added, paies_added, paies_skipped))
+}
 
 pub async fn execute_import_legacy_localstorage(
     pool: &SqlitePool,
@@ -198,200 +528,27 @@ pub async fn execute_import_legacy_localstorage(
                     continue;
                 }
 
-                // Vérifier/Créer le client pour satisfaire la contrainte de clé étrangère
-                let client_exists: Option<(i64,)> = sqlx::query_as(
-                    "SELECT 1 FROM clients WHERE id = ?"
-                )
-                .bind(&c.customer_id)
-                .fetch_optional(&mut *conn)
-                .await
-                .map_err(AppError::DatabaseError)?;
-
-                if client_exists.is_none() {
-                    let prenom = c.customer_name.clone().unwrap_or_else(|| "Client".to_string());
-                    let nom = "Historique".to_string();
-                    let tel = c.customer_phone.clone().unwrap_or_else(|| "0000000000".to_string());
-                    let created = c.created_at.clone().unwrap_or_else(|| now.clone());
-
-                    sqlx::query(
-                        "INSERT OR IGNORE INTO clients (id, prenom, nom, telephone, email, adresse, numero_cni, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(&c.customer_id)
-                    .bind(prenom)
-                    .bind(nom)
-                    .bind(tel)
-                    .bind(&c.customer_email)
-                    .bind(&c.customer_address)
-                    .bind(&c.customer_cni)
-                    .bind(&created)
-                    .bind(&created)
-                    .execute(&mut *conn)
-                    .await
-                    .map_err(AppError::DatabaseError)?;
-                }
-
-                // Utilisateur responsable (par défaut 'usr-001')
-                let user_id = "usr-001";
-
-                let statut_valid = match c.status.as_str() {
-                    "brouillon" | "reserve" | "en_cours" | "retourne" | "en_retard" | "litige" | "annule" => c.status.clone(),
-                    _ => "en_cours".to_string(),
-                };
-
-                let statut_caution_valid = match c.deposit_status.as_deref() {
-                    Some("non_recue") | Some("encaissee") | Some("empreinte_cb") | Some("cheque_retenu")
-                    | Some("restituee") | Some("conservee_partiellement") | Some("conservee_totalement") => {
-                        c.deposit_status.clone().unwrap()
-                    }
-                    _ => "non_recue".to_string(),
-                };
-
-                let created_date = c.created_at.clone().unwrap_or_else(|| now.clone());
-                let updated_date = c.updated_at.clone().unwrap_or_else(|| created_date.clone());
-
-                sqlx::query(
-                    "INSERT INTO locations (
-                        id, numero_location, client_id, utilisateur_id, statut,
-                        date_evenement, date_retrait_prevue, date_retrait_effective,
-                        date_retour_prevue, date_retour_effective, montant_total_ht_centimes,
-                        tva_taux, montant_total_ttc_centimes, frais_nettoyage_centimes,
-                        frais_retard_centimes, frais_degradation_centimes, remise_centimes,
-                        montant_caution_centimes, statut_caution, notes_caution, notes,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 19.0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                )
-                .bind(&c.id)
-                .bind(&c.contract_number)
-                .bind(&c.customer_id)
-                .bind(user_id)
-                .bind(statut_valid)
-                .bind(&c.event_date)
-                .bind(&c.pickup_date)
-                .bind(&c.pickup_date) // date_retrait_effective
-                .bind(&c.return_date_scheduled)
-                .bind(&c.return_date_actual)
-                .bind(c.total_rental_cents.unwrap_or(c.total_amount_cents))
-                .bind(c.total_amount_cents)
-                .bind(c.cleaning_fee_cents.unwrap_or(0))
-                .bind(c.late_fee_cents.unwrap_or(0))
-                .bind(c.damage_fee_cents.unwrap_or(0))
-                .bind(c.discount_cents.unwrap_or(0))
-                .bind(c.deposit_amount_cents.unwrap_or(0))
-                .bind(statut_caution_valid)
-                .bind(&c.deposit_notes)
-                .bind(&c.notes)
-                .bind(&created_date)
-                .bind(&updated_date)
-                .execute(&mut *conn)
-                .await
-                .map_err(AppError::DatabaseError)?;
-
-                report.locations_imported += 1;
-
-                // Lignes de location
-                for (idx, item) in c.items.iter().enumerate() {
-                    // S'assurer que la variante existe
-                    let var_exists: Option<(i64,)> = sqlx::query_as(
-                        "SELECT 1 FROM variantes_stock WHERE id = ?"
-                    )
-                    .bind(&item.variant_id)
-                    .fetch_optional(&mut *conn)
-                    .await
-                    .map_err(AppError::DatabaseError)?;
-
-                    if var_exists.is_none() {
-                        // Récupérer un article valide pour ancrer la variante
-                        let art_id: Option<(String,)> = sqlx::query_as(
-                            "SELECT id FROM articles LIMIT 1"
-                        )
-                        .fetch_optional(&mut *conn)
-                        .await
-                        .map_err(AppError::DatabaseError)?;
-
-                        if let Some((valid_art_id,)) = art_id {
-                            let barcode = format!("BAR-IMP-{}", &item.variant_id);
-                            sqlx::query(
-                                "INSERT OR IGNORE INTO variantes_stock (id, article_id, code_barre, taille, etat_usure, statut, created_at, updated_at)
-                                 VALUES (?, ?, ?, 'Standard', 'bon', 'disponible', ?, ?)"
-                            )
-                            .bind(&item.variant_id)
-                            .bind(valid_art_id)
-                            .bind(barcode)
-                            .bind(&created_date)
-                            .bind(&created_date)
-                            .execute(&mut *conn)
-                            .await
-                            .map_err(AppError::DatabaseError)?;
-                        }
-                    }
-
-                    let ligne_id = format!("lign-{}-{}", &c.id, idx);
-                    let is_rendu = if item.is_returned.unwrap_or(false) { 1 } else { 0 };
-
-                    sqlx::query(
-                        "INSERT INTO lignes_location (
-                            id, location_id, variante_id, type_ligne, prix_unitaire_centimes,
-                            caution_centimes, etat_depart, etat_retour, est_rendu, date_retour, notes
-                        ) VALUES (?, ?, ?, 'location', ?, ?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(&ligne_id)
-                    .bind(&c.id)
-                    .bind(&item.variant_id)
-                    .bind(item.unit_price_cents)
-                    .bind(item.deposit_cents.unwrap_or(0))
-                    .bind(item.pickup_condition.as_deref().unwrap_or("excellent"))
-                    .bind(item.return_condition.as_deref())
-                    .bind(is_rendu)
-                    .bind(&item.return_date)
-                    .bind(&item.damage_notes)
+                // Isolation de chaque contrat via SAVEPOINT
+                sqlx::query("SAVEPOINT sp_contrat;")
                     .execute(&mut *conn)
                     .await
                     .map_err(AppError::DatabaseError)?;
 
-                    report.lignes_location_imported += 1;
-                }
-
-                // Paiement associé à la location
-                if let Some(paid) = c.paid_amount_cents {
-                    if paid > 0 {
-                        let pay_id = format!("pay-loc-{}", &c.id);
-                        let pay_exists: Option<(i64,)> = sqlx::query_as(
-                            "SELECT 1 FROM paiements WHERE id = ?"
-                        )
-                        .bind(&pay_id)
-                        .fetch_optional(&mut *conn)
-                        .await
-                        .map_err(AppError::DatabaseError)?;
-
-                        if pay_exists.is_none() {
-                            let pay_method = match c.payment_method.as_deref() {
-                                Some("especes") | Some("carte_bancaire") | Some("cheque") | Some("virement") => {
-                                    c.payment_method.clone().unwrap()
-                                }
-                                _ => "especes".to_string(),
-                            };
-
-                            sqlx::query(
-                                "INSERT INTO paiements (
-                                    id, location_id, vente_id, utilisateur_id, montant_centimes,
-                                    type_paiement, moyen_paiement, notes, date_paiement
-                                ) VALUES (?, ?, NULL, ?, ?, 'solde', ?, 'Paiement import historique', ?)"
-                            )
-                            .bind(&pay_id)
-                            .bind(&c.id)
-                            .bind(user_id)
-                            .bind(paid)
-                            .bind(pay_method)
-                            .bind(&created_date)
+                match try_import_contract(&mut conn, &c, &now).await {
+                    Ok((locs, lignes, paies, paies_skip)) => {
+                        sqlx::query("RELEASE SAVEPOINT sp_contrat;")
                             .execute(&mut *conn)
                             .await
                             .map_err(AppError::DatabaseError)?;
-
-                            report.paiements_imported += 1;
-                        } else {
-                            report.paiements_skipped_duplicates += 1;
-                        }
+                        report.locations_imported += locs;
+                        report.lignes_location_imported += lignes;
+                        report.paiements_imported += paies;
+                        report.paiements_skipped_duplicates += paies_skip;
+                    }
+                    Err(err_msg) => {
+                        let _ = sqlx::query("ROLLBACK TO SAVEPOINT sp_contrat;").execute(&mut *conn).await;
+                        let _ = sqlx::query("RELEASE SAVEPOINT sp_contrat;").execute(&mut *conn).await;
+                        report.errors.push(format!("Contrat {}: {}", c.contract_number, err_msg));
                     }
                 }
             }
@@ -415,112 +572,47 @@ pub async fn execute_import_legacy_localstorage(
                     continue;
                 }
 
-                let user_id = s.user_id.clone().unwrap_or_else(|| "usr-001".to_string());
-                let created_date = s.created_at.clone().unwrap_or_else(|| now.clone());
-                let moyen_paiement = s.payment.as_ref()
-                    .map(|p| p.method.clone())
-                    .unwrap_or_else(|| "especes".to_string());
-
-                let moyen_valid = match moyen_paiement.as_str() {
-                    "especes" | "carte_bancaire" | "cheque" | "virement" | "autre" => moyen_paiement,
-                    _ => "especes".to_string(),
-                };
-
-                sqlx::query(
-                    "INSERT INTO ventes (
-                        id, numero_vente, client_id, utilisateur_id, montant_total_centimes,
-                        moyen_paiement, statut, notes, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'completee', ?, ?)"
-                )
-                .bind(&s.id)
-                .bind(&s.sale_number)
-                .bind(&s.customer_id)
-                .bind(&user_id)
-                .bind(s.total_amount_cents)
-                .bind(moyen_valid)
-                .bind(&s.notes)
-                .bind(&created_date)
-                .execute(&mut *conn)
-                .await
-                .map_err(AppError::DatabaseError)?;
-
-                report.ventes_imported += 1;
-
-                // Lignes de vente
-                for (idx, item) in s.items.iter().enumerate() {
-                    let ligne_id = item.id.clone().unwrap_or_else(|| format!("lign-vte-{}-{}", &s.id, idx));
-                    let qty = item.quantity.unwrap_or(1);
-                    let subtotal = item.subtotal_cents.unwrap_or(item.unit_price_cents * qty);
-
-                    sqlx::query(
-                        "INSERT INTO lignes_vente (
-                            id, vente_id, article_id, variante_id, quantite,
-                            prix_unitaire_centimes, total_centimes
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(&ligne_id)
-                    .bind(&s.id)
-                    .bind(&item.article_id)
-                    .bind(&item.variant_id)
-                    .bind(qty)
-                    .bind(item.unit_price_cents)
-                    .bind(subtotal)
+                // Isolation de chaque vente via SAVEPOINT
+                sqlx::query("SAVEPOINT sp_vente;")
                     .execute(&mut *conn)
                     .await
                     .map_err(AppError::DatabaseError)?;
 
-                    report.lignes_vente_imported += 1;
-                }
-
-                // Paiement de la vente
-                if let Some(payment) = s.payment {
-                    if payment.amount_paid_cents > 0 {
-                        let pay_id = format!("pay-vte-{}", &s.id);
-                        let pay_exists: Option<(i64,)> = sqlx::query_as(
-                            "SELECT 1 FROM paiements WHERE id = ?"
-                        )
-                        .bind(&pay_id)
-                        .fetch_optional(&mut *conn)
-                        .await
-                        .map_err(AppError::DatabaseError)?;
-
-                        if pay_exists.is_none() {
-                            let moyen_paiement = match payment.method.as_str() {
-                                "especes" | "carte_bancaire" | "cheque" | "virement" | "autre" => payment.method,
-                                _ => "especes".to_string(),
-                            };
-
-                            sqlx::query(
-                                "INSERT INTO paiements (
-                                    id, location_id, vente_id, utilisateur_id, montant_centimes,
-                                    type_paiement, moyen_paiement, reference_transaction, notes, date_paiement
-                                ) VALUES (?, NULL, ?, ?, ?, 'vente_directe', ?, ?, 'Paiement vente import historique', ?)"
-                            )
-                            .bind(&pay_id)
-                            .bind(&s.id)
-                            .bind(&user_id)
-                            .bind(payment.amount_paid_cents)
-                            .bind(moyen_paiement)
-                            .bind(&payment.transaction_ref)
-                            .bind(&created_date)
+                match try_import_sale(&mut conn, &s, &now).await {
+                    Ok((vtes, lignes, paies, paies_skip)) => {
+                        sqlx::query("RELEASE SAVEPOINT sp_vente;")
                             .execute(&mut *conn)
                             .await
                             .map_err(AppError::DatabaseError)?;
-
-                            report.paiements_imported += 1;
-                        } else {
-                            report.paiements_skipped_duplicates += 1;
-                        }
+                        report.ventes_imported += vtes;
+                        report.lignes_vente_imported += lignes;
+                        report.paiements_imported += paies;
+                        report.paiements_skipped_duplicates += paies_skip;
+                    }
+                    Err(err_msg) => {
+                        let _ = sqlx::query("ROLLBACK TO SAVEPOINT sp_vente;").execute(&mut *conn).await;
+                        let _ = sqlx::query("RELEASE SAVEPOINT sp_vente;").execute(&mut *conn).await;
+                        report.errors.push(format!("Vente {}: {}", s.sale_number, err_msg));
                     }
                 }
             }
         }
 
         // 3. MISE À JOUR DU FLAG DE MIGRATION DANS APP_META
+        // Le flag ne doit être posé à '1' QUE si aucune erreur n'a été rencontrée.
+        // En cas d'erreurs (import partiel), le flag est positionné à 'partial',
+        // permettant un nouveau passage sans considérer la migration comme achevée.
+        let flag_valeur = if report.errors.is_empty() {
+            "1"
+        } else {
+            "partial"
+        };
+
         sqlx::query(
-            "INSERT INTO app_meta (cle, valeur, updated_at) VALUES ('local_storage_migrated', '1', ?)
-             ON CONFLICT(cle) DO UPDATE SET valeur = '1', updated_at = excluded.updated_at"
+            "INSERT INTO app_meta (cle, valeur, updated_at) VALUES ('local_storage_migrated', ?, ?)
+             ON CONFLICT(cle) DO UPDATE SET valeur = excluded.valeur, updated_at = excluded.updated_at"
         )
+        .bind(flag_valeur)
         .bind(&now)
         .execute(&mut *conn)
         .await
