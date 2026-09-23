@@ -104,3 +104,23 @@ export interface ClotureCaisse {
   operator_notes?: string;
   pdf_path?: string;
 }
+
+export type CashSessionDto = ClotureCaisse;
+
+export interface RecordPaymentResultDto {
+  paiement: {
+    id: string;
+    location_id?: string | null;
+    vente_id?: string | null;
+    utilisateur_id: string;
+    montant_centimes: number;
+    type_paiement: string;
+    moyen_paiement: string;
+    reference_transaction?: string | null;
+    notes?: string | null;
+    date_paiement: string;
+  };
+  has_active_session: boolean;
+  session_id?: string | null;
+  outside_session_warning?: string | null;
+}

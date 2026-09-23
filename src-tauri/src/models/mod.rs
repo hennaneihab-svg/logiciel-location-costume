@@ -614,6 +614,14 @@ pub struct RecordPaymentDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordPaymentResultDto {
+    pub paiement: Paiement,
+    pub has_active_session: bool,
+    pub session_id: Option<String>,
+    pub outside_session_warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCashSessionDto {
     pub utilisateur_id: String,
     pub initial_cash_float_cents: i64,

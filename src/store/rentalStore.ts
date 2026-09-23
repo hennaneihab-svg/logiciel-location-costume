@@ -8,6 +8,8 @@ import type {
 import { useStockStore } from "@/store/stockStore";
 import { useClientStore } from "@/store/clientStore";
 import { useAuthStore } from "@/store/authStore";
+import { useCaisseStore } from "@/store/caisseStore";
+import type { RecordPaymentResultDto } from "@/types/caisse";
 import { calculateRentalDays } from "@/lib/utils";
 import { invokeCommand, isTauri } from "@/services/tauri";
 
@@ -65,7 +67,7 @@ interface RentalStoreState {
     typePaiement: "solde" | "caution" | "frais_retard" | "degradation" | "remboursement",
     moyenPaiement: string,
     notes?: string
-  ) => Promise<void>;
+  ) => Promise<RecordPaymentResultDto>;
 }
 
 // 15 contrats initiaux complets et réalistes
@@ -765,7 +767,7 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
     typePaiement: "solde" | "caution" | "frais_retard" | "degradation" | "remboursement",
     moyenPaiement: string,
     notes?: string
-  ) => {
+  ): Promise<RecordPaymentResultDto> => {
     const currentUser = useAuthStore.getState().currentUser;
     if (!currentUser) {
       throw new Error("Opération impossible : aucun utilisateur n'est actuellement authentifié.");
@@ -784,15 +786,18 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
           reference_transaction: null,
           notes: notes || null,
         };
-        await invokeCommand("record_payment", { dto });
+        const res = await invokeCommand<RecordPaymentResultDto>("record_payment", { dto });
         await get().loadContracts();
+        return res;
       } finally {
         set({ isLoading: false });
       }
-      return;
     }
 
     // Mode hors Tauri (tests / mémoire)
+    const activeSession = useCaisseStore.getState().activeSession;
+    const hasActiveSession = Boolean(activeSession && activeSession.status === "ouverte");
+
     set((state) => ({
       contracts: state.contracts.map((c) => {
         if (c.id !== locationId) return c;
@@ -815,5 +820,25 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
         };
       }),
     }));
+
+    return {
+      paiement: {
+        id: `pay-${Date.now()}`,
+        location_id: locationId,
+        vente_id: null,
+        utilisateur_id: currentUser.id,
+        montant_centimes: montantCentimes,
+        type_paiement: typePaiement,
+        moyen_paiement: moyenPaiement,
+        reference_transaction: null,
+        notes: notes || null,
+        date_paiement: new Date().toISOString(),
+      },
+      has_active_session: hasActiveSession,
+      session_id: hasActiveSession ? activeSession!.id : null,
+      outside_session_warning: !hasActiveSession
+        ? "Paiement enregistré hors session de caisse : ce montant sera automatiquement réconcilié lors de la prochaine clôture."
+        : null,
+    };
   },
 }));

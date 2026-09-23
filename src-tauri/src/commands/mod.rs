@@ -1972,12 +1972,227 @@ pub async fn open_cash_session(dto: OpenCashSessionDto, state: State<'_, DbState
     execute_open_cash_session(&state.pool, dto).await
 }
 
+#[derive(Debug, Clone)]
+pub struct LiveSessionReconciliationData {
+    pub session_id: String,
+    pub date_session: String,
+    pub initial_cash: i64,
+    pub now: String,
+    pub sales_total_cents: i64,
+    pub rentals_total_cents: i64,
+    pub deposits_total_cents: i64,
+    pub grand_total_cents: i64,
+    pub total_especes: i64,
+    pub total_carte: i64,
+    pub total_cheque: i64,
+    pub total_virement: i64,
+    pub theoretical_cash: i64,
+    pub breakdown: CashSessionBreakdown,
+}
+
+pub async fn compute_live_cash_session_reconciliation_conn(
+    conn: &mut sqlx::SqliteConnection,
+    session_id: &str,
+) -> Result<LiveSessionReconciliationData, AppError> {
+    use sqlx::Row;
+
+    let row = sqlx::query(
+        "SELECT id, date_session, fonds_initial_centimes, statut FROM sessions_caisse WHERE id = ?"
+    )
+    .bind(session_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(map_sqlite_err)?
+    .ok_or_else(|| AppError::NotFound(format!("Session de caisse introuvable : {}", session_id)))?;
+
+    let sid: String = row.get("id");
+    let date_session: String = row.get("date_session");
+    let initial_cash: i64 = row.get("fonds_initial_centimes");
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Réconciliation de tous les paiements de la session (depuis la dernière clôture de la même journée, ou le début du jour)
+    let prev_closed: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT MAX(closed_at) FROM sessions_caisse WHERE (date_session = ? OR closed_at LIKE ? || '%') AND statut = 'cloturee' AND id != ?"
+    )
+    .bind(&date_session)
+    .bind(&date_session)
+    .bind(&sid)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(map_sqlite_err)?;
+
+    let session_payments: Vec<(i64, String, String, Option<String>, Option<String>)> = if let Some((Some(ref prev_c),)) = prev_closed {
+        sqlx::query_as(
+            "SELECT montant_centimes, type_paiement, moyen_paiement, vente_id, location_id 
+             FROM paiements 
+             WHERE date_paiement > ? AND date_paiement <= ?"
+        )
+        .bind(prev_c)
+        .bind(&now)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(map_sqlite_err)?
+    } else {
+        let start_of_day = format!("{}T00:00:00", date_session);
+        sqlx::query_as(
+            "SELECT montant_centimes, type_paiement, moyen_paiement, vente_id, location_id 
+             FROM paiements 
+             WHERE (date(date_paiement) = ? OR date_paiement >= ?) AND date_paiement <= ?"
+        )
+        .bind(&date_session)
+        .bind(&start_of_day)
+        .bind(&now)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(map_sqlite_err)?
+    };
+
+    let mut reconciled_rentals = 0i64;
+    let mut reconciled_deposits = 0i64;
+    let mut reconciled_sales = 0i64;
+    let mut reconciled_especes = 0i64;
+    let mut reconciled_carte = 0i64;
+    let mut reconciled_cheque = 0i64;
+    let mut reconciled_virement = 0i64;
+    let mut count_especes = 0i64;
+    let mut count_carte = 0i64;
+    let mut count_cheque = 0i64;
+    let mut count_virement = 0i64;
+
+    for (montant, type_p, moyen, v_id, _l_id) in session_payments {
+        let is_refund = type_p == "remboursement" || montant < 0;
+        let abs_amt = montant.abs();
+
+        if is_refund {
+            if v_id.is_some() {
+                reconciled_sales -= abs_amt;
+            } else {
+                reconciled_rentals -= abs_amt;
+            }
+            match moyen.as_str() {
+                "carte_bancaire" => { reconciled_carte -= abs_amt; count_carte += 1; },
+                "cheque" => { reconciled_cheque -= abs_amt; count_cheque += 1; },
+                "virement" => { reconciled_virement -= abs_amt; count_virement += 1; },
+                _ => { reconciled_especes -= abs_amt; count_especes += 1; },
+            }
+        } else if type_p == "caution" {
+            reconciled_deposits += montant;
+            match moyen.as_str() {
+                "carte_bancaire" => { reconciled_carte += montant; count_carte += 1; },
+                "cheque" => { reconciled_cheque += montant; count_cheque += 1; },
+                "virement" => { reconciled_virement += montant; count_virement += 1; },
+                _ => { reconciled_especes += montant; count_especes += 1; },
+            }
+        } else if v_id.is_some() || type_p == "vente" {
+            reconciled_sales += montant;
+            match moyen.as_str() {
+                "carte_bancaire" => { reconciled_carte += montant; count_carte += 1; },
+                "cheque" => { reconciled_cheque += montant; count_cheque += 1; },
+                "virement" => { reconciled_virement += montant; count_virement += 1; },
+                _ => { reconciled_especes += montant; count_especes += 1; },
+            }
+        } else {
+            reconciled_rentals += montant;
+            match moyen.as_str() {
+                "carte_bancaire" => { reconciled_carte += montant; count_carte += 1; },
+                "cheque" => { reconciled_cheque += montant; count_cheque += 1; },
+                "virement" => { reconciled_virement += montant; count_virement += 1; },
+                _ => { reconciled_especes += montant; count_especes += 1; },
+            }
+        }
+    }
+
+    let grand_total = reconciled_sales + reconciled_rentals;
+    let theoretical_cash = initial_cash + reconciled_especes;
+
+    let breakdown = CashSessionBreakdown {
+        especes: CashSessionBreakdownMethod { total_cents: reconciled_especes, transaction_count: count_especes },
+        carte_bancaire: CashSessionBreakdownMethod { total_cents: reconciled_carte, transaction_count: count_carte },
+        cheque: CashSessionBreakdownMethod { total_cents: reconciled_cheque, transaction_count: count_cheque },
+        virement: CashSessionBreakdownMethod { total_cents: reconciled_virement, transaction_count: count_virement },
+    };
+
+    Ok(LiveSessionReconciliationData {
+        session_id: sid,
+        date_session,
+        initial_cash,
+        now,
+        sales_total_cents: reconciled_sales,
+        rentals_total_cents: reconciled_rentals,
+        deposits_total_cents: reconciled_deposits,
+        grand_total_cents: grand_total,
+        total_especes: reconciled_especes,
+        total_carte: reconciled_carte,
+        total_cheque: reconciled_cheque,
+        total_virement: reconciled_virement,
+        theoretical_cash,
+        breakdown,
+    })
+}
+
+pub async fn fetch_live_cash_session_dto(
+    pool: &sqlx::SqlitePool,
+    session_id: &str,
+) -> Result<CashSessionDto, AppError> {
+    let mut conn = pool.acquire().await.map_err(AppError::DatabaseError)?;
+    let recon = compute_live_cash_session_reconciliation_conn(&mut conn, session_id).await?;
+
+    let row = sqlx::query(
+        "SELECT s.*, u.nom_complet as user_name, u.role as user_role
+         FROM sessions_caisse s
+         JOIN utilisateurs u ON s.utilisateur_id = u.id
+         WHERE s.id = ?"
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::DatabaseError)?
+    .ok_or_else(|| AppError::NotFound(format!("Session de caisse introuvable : {}", session_id)))?;
+
+    use sqlx::Row;
+    let id: String = row.get("id");
+    let cloture_number: String = row.get("numero_session");
+    let date: String = row.get("date_session");
+    let opened_at: String = row.get("opened_at");
+    let closed_at: Option<String> = row.get("closed_at");
+    let closed_by_user_id: Option<String> = row.get("utilisateur_id");
+    let closed_by_user_name: Option<String> = row.get("user_name");
+    let closed_by_role: Option<String> = row.get("user_role");
+    let status: String = row.get("statut");
+    let counted_cash_cents: Option<i64> = row.get("total_especes_compte_centimes");
+    let discrepancy_cents: Option<i64> = row.get("ecart_centimes");
+    let operator_notes: Option<String> = row.get("notes");
+
+    Ok(CashSessionDto {
+        id,
+        cloture_number,
+        date,
+        opened_at,
+        closed_at,
+        closed_by_user_id,
+        closed_by_user_name,
+        closed_by_role,
+        status,
+        initial_cash_float_cents: recon.initial_cash,
+        sales_total_cents: recon.sales_total_cents,
+        rentals_total_cents: recon.rentals_total_cents,
+        deposits_total_cents: recon.deposits_total_cents,
+        grand_total_cents: recon.grand_total_cents,
+        breakdown: recon.breakdown,
+        theoretical_cash_cents: recon.theoretical_cash,
+        counted_cash_cents,
+        discrepancy_cents,
+        operator_notes,
+    })
+}
+
 pub async fn execute_close_cash_session(pool: &sqlx::SqlitePool, dto: CloseCashSessionDto) -> Result<CashSessionDto, AppError> {
+    use sqlx::Row;
+
     let mut tx = ImmediateTx::begin(pool).await?;
 
     let session_id = match async {
-        use sqlx::Row;
-
         let row = if let Some(ref sid) = dto.session_id {
             sqlx::query("SELECT id, date_session, fonds_initial_centimes, total_especes_centimes, statut, opened_at FROM sessions_caisse WHERE id = ?")
                 .bind(sid)
@@ -1997,101 +2212,9 @@ pub async fn execute_close_cash_session(pool: &sqlx::SqlitePool, dto: CloseCashS
         }
 
         let sid: String = row.get("id");
-        let date_session: String = row.get("date_session");
-        let initial_cash: i64 = row.get("fonds_initial_centimes");
 
-        let now = chrono::Utc::now().to_rfc3339();
-
-        // Réconciliation de tous les paiements de la session (depuis la dernière clôture de la même journée, ou le début du jour)
-        let prev_closed: Option<(Option<String>,)> = sqlx::query_as(
-            "SELECT MAX(closed_at) FROM sessions_caisse WHERE (date_session = ? OR closed_at LIKE ? || '%') AND statut = 'cloturee' AND id != ?"
-        )
-        .bind(&date_session)
-        .bind(&date_session)
-        .bind(&sid)
-        .fetch_optional(&mut *tx.conn)
-        .await
-        .map_err(map_sqlite_err)?;
-
-        let session_payments: Vec<(i64, String, String, Option<String>, Option<String>)> = if let Some((Some(ref prev_c),)) = prev_closed {
-            sqlx::query_as(
-                "SELECT montant_centimes, type_paiement, moyen_paiement, vente_id, location_id 
-                 FROM paiements 
-                 WHERE date_paiement > ? AND date_paiement <= ?"
-            )
-            .bind(prev_c)
-            .bind(&now)
-            .fetch_all(&mut *tx.conn)
-            .await
-            .map_err(map_sqlite_err)?
-        } else {
-            let start_of_day = format!("{}T00:00:00", date_session);
-            sqlx::query_as(
-                "SELECT montant_centimes, type_paiement, moyen_paiement, vente_id, location_id 
-                 FROM paiements 
-                 WHERE (date(date_paiement) = ? OR date_paiement >= ?) AND date_paiement <= ?"
-            )
-            .bind(&date_session)
-            .bind(&start_of_day)
-            .bind(&now)
-            .fetch_all(&mut *tx.conn)
-            .await
-            .map_err(map_sqlite_err)?
-        };
-
-        let mut reconciled_rentals = 0i64;
-        let mut reconciled_deposits = 0i64;
-        let mut reconciled_sales = 0i64;
-        let mut reconciled_especes = 0i64;
-        let mut reconciled_carte = 0i64;
-        let mut reconciled_cheque = 0i64;
-        let mut reconciled_virement = 0i64;
-
-        for (montant, type_p, moyen, v_id, _l_id) in session_payments {
-            let is_refund = type_p == "remboursement" || montant < 0;
-            let abs_amt = montant.abs();
-
-            if is_refund {
-                if v_id.is_some() {
-                    reconciled_sales -= abs_amt;
-                } else {
-                    reconciled_rentals -= abs_amt;
-                }
-                match moyen.as_str() {
-                    "carte_bancaire" => reconciled_carte -= abs_amt,
-                    "cheque" => reconciled_cheque -= abs_amt,
-                    "virement" => reconciled_virement -= abs_amt,
-                    _ => reconciled_especes -= abs_amt,
-                }
-            } else if type_p == "caution" {
-                reconciled_deposits += montant;
-                match moyen.as_str() {
-                    "carte_bancaire" => reconciled_carte += montant,
-                    "cheque" => reconciled_cheque += montant,
-                    "virement" => reconciled_virement += montant,
-                    _ => reconciled_especes += montant,
-                }
-            } else if v_id.is_some() || type_p == "vente" {
-                reconciled_sales += montant;
-                match moyen.as_str() {
-                    "carte_bancaire" => reconciled_carte += montant,
-                    "cheque" => reconciled_cheque += montant,
-                    "virement" => reconciled_virement += montant,
-                    _ => reconciled_especes += montant,
-                }
-            } else {
-                reconciled_rentals += montant;
-                match moyen.as_str() {
-                    "carte_bancaire" => reconciled_carte += montant,
-                    "cheque" => reconciled_cheque += montant,
-                    "virement" => reconciled_virement += montant,
-                    _ => reconciled_especes += montant,
-                }
-            }
-        }
-
-        let theoretical_cash = initial_cash + reconciled_especes;
-        let discrepancy = dto.counted_cash_cents - theoretical_cash;
+        let recon = compute_live_cash_session_reconciliation_conn(&mut *tx.conn, &sid).await?;
+        let discrepancy = dto.counted_cash_cents - recon.theoretical_cash;
 
         sqlx::query(
             "UPDATE sessions_caisse 
@@ -2110,17 +2233,17 @@ pub async fn execute_close_cash_session(pool: &sqlx::SqlitePool, dto: CloseCashS
                  notes = COALESCE(?, notes)
              WHERE id = ?"
         )
-        .bind(reconciled_rentals)
-        .bind(reconciled_deposits)
-        .bind(reconciled_sales)
-        .bind(theoretical_cash)
+        .bind(recon.rentals_total_cents)
+        .bind(recon.deposits_total_cents)
+        .bind(recon.sales_total_cents)
+        .bind(recon.theoretical_cash)
         .bind(dto.counted_cash_cents)
-        .bind(reconciled_especes)
-        .bind(reconciled_carte)
-        .bind(reconciled_cheque)
-        .bind(reconciled_virement)
+        .bind(recon.total_especes)
+        .bind(recon.total_carte)
+        .bind(recon.total_cheque)
+        .bind(recon.total_virement)
         .bind(discrepancy)
-        .bind(&now)
+        .bind(&recon.now)
         .bind(&dto.operator_notes)
         .bind(&sid)
         .execute(&mut *tx.conn)
@@ -2156,7 +2279,7 @@ pub async fn execute_get_active_cash_session(pool: &sqlx::SqlitePool) -> Result<
     .map_err(AppError::DatabaseError)?;
 
     match row {
-        Some((id,)) => Ok(Some(fetch_cash_session_dto_by_id(pool, &id).await?)),
+        Some((id,)) => Ok(Some(fetch_live_cash_session_dto(pool, &id).await?)),
         None => Ok(None),
     }
 }
@@ -2166,7 +2289,28 @@ pub async fn get_active_cash_session(state: State<'_, DbState>) -> Result<Option
     execute_get_active_cash_session(&state.pool).await
 }
 
-pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentDto) -> Result<Paiement, AppError> {
+pub async fn execute_get_session_theoretical_cash(pool: &sqlx::SqlitePool, session_id: Option<String>) -> Result<CashSessionDto, AppError> {
+    let sid = match session_id {
+        Some(id) => id,
+        None => {
+            let row: Option<(String,)> = sqlx::query_as(
+                "SELECT id FROM sessions_caisse WHERE statut = 'ouverte' ORDER BY date_session DESC LIMIT 1"
+            )
+            .fetch_optional(pool)
+            .await
+            .map_err(AppError::DatabaseError)?;
+            row.map(|(id,)| id).ok_or_else(|| AppError::Validation("Aucune session de caisse ouverte trouvée.".to_string()))?
+        }
+    };
+    fetch_live_cash_session_dto(pool, &sid).await
+}
+
+#[command]
+pub async fn get_session_theoretical_cash(session_id: Option<String>, state: State<'_, DbState>) -> Result<CashSessionDto, AppError> {
+    execute_get_session_theoretical_cash(&state.pool, session_id).await
+}
+
+pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentDto) -> Result<RecordPaymentResultDto, AppError> {
     let valid_types = [
         "acompte",
         "solde",
@@ -2200,7 +2344,7 @@ pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentD
 
     let mut tx = ImmediateTx::begin(pool).await?;
 
-    let pay_id = match async {
+    let (pay_id, has_active_session, session_id, outside_session_warning) = match async {
         let user_exists: Option<(String,)> = sqlx::query_as(
             "SELECT id FROM utilisateurs WHERE id = ? AND est_actif = 1"
         )
@@ -2276,6 +2420,14 @@ pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentD
         .await
         .map_err(map_sqlite_err)?;
 
+        let has_active_session = active_session.is_some();
+        let session_id = active_session.as_ref().map(|(id,)| id.clone());
+        let outside_session_warning = if !has_active_session {
+            Some("Paiement enregistré hors session de caisse : il sera réconcilié lors de la prochaine clôture.".to_string())
+        } else {
+            None
+        };
+
         if let Some((ses_id,)) = active_session {
             let col_name = match dto.moyen_paiement.as_str() {
                 "especes" => "total_especes_centimes",
@@ -2349,11 +2501,11 @@ pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentD
             }
         }
 
-        Ok(pay_id)
+        Ok((pay_id, has_active_session, session_id, outside_session_warning))
     }.await {
-        Ok(id) => {
+        Ok(vals) => {
             tx.commit().await?;
-            id
+            vals
         }
         Err(e) => {
             let _ = tx.rollback().await;
@@ -2361,15 +2513,22 @@ pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentD
         }
     };
 
-    sqlx::query_as::<_, Paiement>("SELECT * FROM paiements WHERE id = ?")
+    let paiement = sqlx::query_as::<_, Paiement>("SELECT * FROM paiements WHERE id = ?")
         .bind(&pay_id)
         .fetch_one(pool)
         .await
-        .map_err(AppError::DatabaseError)
+        .map_err(AppError::DatabaseError)?;
+
+    Ok(RecordPaymentResultDto {
+        paiement,
+        has_active_session,
+        session_id,
+        outside_session_warning,
+    })
 }
 
 #[command]
-pub async fn record_payment(dto: RecordPaymentDto, state: State<'_, DbState>) -> Result<Paiement, AppError> {
+pub async fn record_payment(dto: RecordPaymentDto, state: State<'_, DbState>) -> Result<RecordPaymentResultDto, AppError> {
     execute_record_payment(&state.pool, dto).await
 }
 

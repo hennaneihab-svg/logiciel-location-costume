@@ -55,6 +55,7 @@ pub fn run() {
             commands::open_cash_session,
             commands::close_cash_session,
             commands::get_active_cash_session,
+            commands::get_session_theoretical_cash,
             commands::record_payment,
             commands::list_payments,
             // Alertes

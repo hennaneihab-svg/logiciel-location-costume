@@ -5,6 +5,16 @@ import { useRentalStore } from "@/store/rentalStore";
 import { useAuthStore } from "@/store/authStore";
 import * as tauriService from "@/services/tauri";
 import type { RentalContract } from "@/types/rental";
+import { toast } from "sonner";
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn(),
+    info: vi.fn(),
+  },
+}));
 
 const mockContractWithBalance: RentalContract = {
   id: "loc-test-01",
@@ -146,6 +156,39 @@ describe("D3 — Tests Vitest RentalPaymentModal & recordContractPayment", () =>
         );
       });
     });
+
+    it("affiche un avertissement visible et non bloquant si le paiement est enregistré hors session active", async () => {
+      const handleClose = vi.fn();
+      const mockResult = {
+        paiement: {
+          id: "pay-test-1",
+          utilisateur_id: "usr-admin-01",
+          montant_centimes: 5000,
+          type_paiement: "solde",
+          moyen_paiement: "especes",
+          date_paiement: "2026-10-01T12:00:00Z",
+        },
+        has_active_session: false,
+        session_id: null,
+        outside_session_warning: "Paiement enregistré hors session de caisse : ce montant de 5000 DA sera réconcilié lors de la prochaine clôture.",
+      };
+
+      vi.spyOn(useRentalStore.getState(), "recordContractPayment").mockResolvedValue(mockResult as any);
+
+      render(<RentalPaymentModal contract={mockContractWithBalance} onClose={handleClose} />);
+
+      const input = screen.getByRole("spinbutton");
+      fireEvent.change(input, { target: { value: "5000" } });
+      fireEvent.click(screen.getByText("Valider le règlement"));
+
+      await waitFor(() => {
+        expect(toast.warning).toHaveBeenCalledWith(
+          expect.stringContaining("hors session de caisse"),
+          expect.objectContaining({ duration: 6000 })
+        );
+        expect(handleClose).toHaveBeenCalled();
+      });
+    });
   });
 
   describe("Store rentalStore — action recordContractPayment", () => {
@@ -223,6 +266,30 @@ describe("D3 — Tests Vitest RentalPaymentModal & recordContractPayment", () =>
       );
 
       expect(loadCalled).toBe(true);
+    });
+
+    it("retourne le DTO enrichi avec avertissement si paiement hors session active en mode mémoire", async () => {
+      vi.spyOn(tauriService, "isTauri").mockReturnValue(false);
+
+      useRentalStore.setState({
+        contracts: [mockContractWithBalance],
+      });
+
+      const res = await useRentalStore.getState().recordContractPayment(
+        "loc-test-01",
+        2000,
+        "solde",
+        "especes",
+        "Paiement sans session"
+      );
+
+      expect(res.has_active_session).toBe(false);
+      expect(res.outside_session_warning).toContain("hors session de caisse");
+      expect(res.paiement.montant_centimes).toBe(2000);
+
+      const updatedContract = useRentalStore.getState().contracts.find((c) => c.id === "loc-test-01");
+      expect(updatedContract?.paid_amount_cents).toBe(13000);
+      expect(updatedContract?.remaining_amount_cents).toBe(5000);
     });
   });
 });

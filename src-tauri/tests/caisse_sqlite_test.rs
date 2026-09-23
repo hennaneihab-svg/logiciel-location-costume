@@ -748,21 +748,21 @@ async fn test_contract_payment_lifecycle_and_session() {
         notes: Some("Remboursement suite geste commercial".to_string()),
     };
     let refund_pay = execute_record_payment(&pool, refund_dto).await.expect("Refund ok");
-    assert_eq!(refund_pay.montant_centimes, -2000, "Le remboursement est enregistré avec montant négatif");
+    assert_eq!(refund_pay.paiement.montant_centimes, -2000, "Le remboursement est enregistré avec montant négatif");
 
     let c_after_refund = fetch_rental_dto_by_id(&pool, &contract.id).await.unwrap();
     assert_eq!(c_after_refund.paid_amount_cents, 16000, "18000 - 2000 = 16000 DA");
 
-    // 8. Vérification des totaux de la session de caisse
+    // 8. Vérification des totaux de la session de caisse réconciliée
     let session_active = execute_get_active_cash_session(&pool).await.unwrap().unwrap();
     // Ventes = 0
     assert_eq!(session_active.sales_total_cents, 0);
-    // Locations = 6000 (pay1) + 7000 (pay2) - 2000 (remboursement) = 11 000 DA
-    assert_eq!(session_active.rentals_total_cents, 11000);
+    // Locations = 5000 (initial) + 6000 (pay1) + 7000 (pay2) - 2000 (remboursement) = 16 000 DA
+    assert_eq!(session_active.rentals_total_cents, 16000);
     // Cautions = 45 000 DA
     assert_eq!(session_active.deposits_total_cents, 45000);
-    // Espèces = 6000 (pay1) + 45000 (caution) - 2000 (remboursement) = 49 000 DA
-    assert_eq!(session_active.breakdown.especes.total_cents, 49000);
+    // Espèces = 5000 (initial) + 6000 (pay1) + 45000 (caution) - 2000 (remboursement) = 54 000 DA
+    assert_eq!(session_active.breakdown.especes.total_cents, 54000);
     // Carte = 7000 DA
     assert_eq!(session_active.breakdown.carte_bancaire.total_cents, 7000);
 
@@ -1245,6 +1245,212 @@ async fn test_migration_0012_performance_indexes() {
     assert!(index_names.contains(&"idx_lignes_vente_vente".to_string()), "Index idx_lignes_vente_vente présent");
     assert!(index_names.contains(&"idx_mouvements_date".to_string()), "Index idx_mouvements_date présent");
     assert!(index_names.contains(&"idx_sessions_caisse_statut_date".to_string()), "Index idx_sessions_caisse_statut_date présent");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_cash_session_live_theoretical_matches_closed_session() {
+    let test_dir = std::env::temp_dir().join(format!("test_live_theoretical_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+    let pool = db::init_db(&test_dir).await.expect("DB init ok");
+
+    let today = today_local();
+
+    // 1. Ouvrir une session de caisse avec 15 000 DA
+    let open_dto = OpenCashSessionDto {
+        utilisateur_id: "usr-001".to_string(),
+        initial_cash_float_cents: 15000,
+        notes: Some("Session test live theoretical".to_string()),
+    };
+    let opened = execute_open_cash_session(&pool, open_dto).await.expect("Open ok");
+
+    // 2. Créer un contrat de location pour recevoir des paiements
+    let rental_dto = CreateRentalContractDto {
+        customer_id: "cli-001".to_string(),
+        utilisateur_id: Some("usr-001".to_string()),
+        pickup_date: today.clone(),
+        return_date_scheduled: today.clone(),
+        event_date: None,
+        selected_variant_ids: vec!["var-001".to_string()],
+        quantity_items: None,
+        pack_lines: None,
+        discount_cents: None,
+        deposit_method: "especes".to_string(),
+        deposit_amount_cents: Some(30000),
+        paid_amount_cents: Some(0),
+        payment_method: "especes".to_string(),
+        notes: None,
+    };
+    let contract = execute_create_rental(&pool, rental_dto).await.expect("Create rental ok");
+
+    // 3. Paiement espèces location : 12 000 DA
+    let pay_loc = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 12000,
+        type_paiement: "acompte".to_string(),
+        moyen_paiement: "especes".to_string(),
+        reference_transaction: None,
+        notes: Some("Acompte espèces".to_string()),
+    };
+    let res_pay_loc = execute_record_payment(&pool, pay_loc).await.expect("Pay loc ok");
+    assert!(res_pay_loc.has_active_session);
+    assert!(res_pay_loc.outside_session_warning.is_none());
+
+    // 4. Caution espèces location : 30 000 DA
+    let pay_caut = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 30000,
+        type_paiement: "caution".to_string(),
+        moyen_paiement: "especes".to_string(),
+        reference_transaction: None,
+        notes: Some("Caution reçue".to_string()),
+    };
+    execute_record_payment(&pool, pay_caut).await.expect("Caution ok");
+
+    // 5. Paiement carte solde : 8 000 DA
+    let pay_card = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 8000,
+        type_paiement: "solde".to_string(),
+        moyen_paiement: "carte_bancaire".to_string(),
+        reference_transaction: Some("CB-4491".to_string()),
+        notes: Some("Solde CB".to_string()),
+    };
+    execute_record_payment(&pool, pay_card).await.expect("Card pay ok");
+
+    // 6. Remboursement espèces geste commercial : -2 000 DA
+    let refund_dto = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 2000,
+        type_paiement: "remboursement".to_string(),
+        moyen_paiement: "especes".to_string(),
+        reference_transaction: None,
+        notes: Some("Geste commercial".to_string()),
+    };
+    execute_record_payment(&pool, refund_dto).await.expect("Refund ok");
+
+    // 7. Interroger le théorique en DIRECT pendant que la session est OUVERTE
+    // Fonds initial : 15 000
+    // + Espèces location : 12 000
+    // + Espèces caution : 30 000
+    // - Espèces remboursement : 2 000
+    // = Total espèces encaissées net : 40 000 DA
+    // = Total théorique attendu dans le tiroir : 15 000 + 40 000 = 55 000 DA
+    let live_session = execute_get_active_cash_session(&pool)
+        .await
+        .expect("Fetch active session ok")
+        .expect("Session must be active");
+
+    assert_eq!(live_session.status, "ouverte");
+    assert_eq!(live_session.initial_cash_float_cents, 15000);
+    assert_eq!(live_session.breakdown.especes.total_cents, 40000);
+    assert_eq!(live_session.breakdown.carte_bancaire.total_cents, 8000);
+    assert_eq!(live_session.theoretical_cash_cents, 55000);
+    assert_eq!(live_session.deposits_total_cents, 30000);
+    assert_eq!(live_session.rentals_total_cents, 18000, "12000 + 8000 - 2000 refund = 18000");
+
+    // Tester également execute_get_session_theoretical_cash
+    let theoretical_direct = execute_get_session_theoretical_cash(&pool, Some(opened.id.clone()))
+        .await
+        .expect("Direct theoretical ok");
+    assert_eq!(theoretical_direct.theoretical_cash_cents, live_session.theoretical_cash_cents);
+    assert_eq!(theoretical_direct.breakdown.especes.total_cents, live_session.breakdown.especes.total_cents);
+
+    // 8. Clôturer immédiatement avec counted_cash_cents = theoretical_cash_cents
+    let close_dto = CloseCashSessionDto {
+        session_id: Some(opened.id.clone()),
+        utilisateur_id: "usr-001".to_string(),
+        counted_cash_cents: live_session.theoretical_cash_cents,
+        operator_notes: Some("Clôture exacte synchronisée".to_string()),
+    };
+    let closed = execute_close_cash_session(&pool, close_dto).await.expect("Close session ok");
+
+    // VALIDATION STRICTE DE CONCORDANCE SERVEUR :
+    // La clôture scellée doit correspondre EXACTEMENT au théorique calculé en direct
+    assert_eq!(closed.status, "cloturee");
+    assert_eq!(closed.theoretical_cash_cents, live_session.theoretical_cash_cents, "Le théorique scellé à la clôture doit être strictement égal au théorique calculé en direct");
+    assert_eq!(closed.counted_cash_cents, Some(55000));
+    assert_eq!(closed.discrepancy_cents, Some(0), "Écart nul car comptage égal au théorique");
+    assert_eq!(closed.breakdown.especes.total_cents, live_session.breakdown.especes.total_cents);
+    assert_eq!(closed.breakdown.carte_bancaire.total_cents, live_session.breakdown.carte_bancaire.total_cents);
+    assert_eq!(closed.sales_total_cents, live_session.sales_total_cents);
+    assert_eq!(closed.rentals_total_cents, live_session.rentals_total_cents);
+    assert_eq!(closed.deposits_total_cents, live_session.deposits_total_cents);
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_record_payment_outside_session_returns_warning() {
+    let test_dir = std::env::temp_dir().join(format!("test_outside_session_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+    let pool = db::init_db(&test_dir).await.expect("DB init ok");
+
+    let today = today_local();
+
+    // 1. Créer une location SANS ouvrir de session de caisse
+    let rental_dto = CreateRentalContractDto {
+        customer_id: "cli-001".to_string(),
+        utilisateur_id: Some("usr-001".to_string()),
+        pickup_date: today.clone(),
+        return_date_scheduled: today.clone(),
+        event_date: None,
+        selected_variant_ids: vec!["var-001".to_string()],
+        quantity_items: None,
+        pack_lines: None,
+        discount_cents: None,
+        deposit_method: "especes".to_string(),
+        deposit_amount_cents: Some(20000),
+        paid_amount_cents: Some(0),
+        payment_method: "especes".to_string(),
+        notes: None,
+    };
+    let contract = execute_create_rental(&pool, rental_dto).await.expect("Create rental ok");
+
+    // 2. Vérifier qu'aucune session active n'existe
+    let active = execute_get_active_cash_session(&pool).await.expect("Query ok");
+    assert!(active.is_none(), "Aucune session ne doit être active");
+
+    // 3. Enregistrer un paiement hors session
+    let pay_dto = RecordPaymentDto {
+        location_id: Some(contract.id.clone()),
+        vente_id: None,
+        utilisateur_id: "usr-001".to_string(),
+        montant_centimes: 10000,
+        type_paiement: "solde".to_string(),
+        moyen_paiement: "especes".to_string(),
+        reference_transaction: None,
+        notes: Some("Paiement anticipé hors session".to_string()),
+    };
+    let result = execute_record_payment(&pool, pay_dto).await.expect("Payment execution ok");
+
+    // 4. Vérifier les signaux explicites de paiement hors session
+    assert!(!result.has_active_session, "has_active_session doit valoir false");
+    assert!(result.session_id.is_none(), "session_id doit être None");
+    assert!(
+        result.outside_session_warning.is_some(),
+        "Un avertissement explicite hors session doit être fourni"
+    );
+    let warning_msg = result.outside_session_warning.unwrap();
+    assert!(
+        warning_msg.contains("hors session de caisse"),
+        "Le warning doit mentionner le hors session"
+    );
+    assert!(
+        warning_msg.contains("réconcilié"),
+        "Le warning doit mentionner la réconciliation future"
+    );
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);

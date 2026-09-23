@@ -4,6 +4,7 @@ import type {
   DirectSale,
   DirectSalePaymentDetails,
   ClotureCaisse,
+  CashSessionDto,
   CaisseTransactionItem,
   CaissePaymentMethod,
 } from "@/types/caisse";
@@ -30,6 +31,7 @@ interface CaisseStoreState {
   salesHistory: DirectSale[];
   currentCashier: CashierUser;
   initialCashFloatCents: number; // 15 000 DA par défaut
+  activeSession: CashSessionDto | null;
   todayCloture: ClotureCaisse | null;
   cloturesHistory: ClotureCaisse[];
   lastCompletedSale: DirectSale | null;
@@ -129,6 +131,7 @@ export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
   salesHistory: INITIAL_SALES,
   currentCashier: AVAILABLE_CASHIERS[0],
   initialCashFloatCents: 15000, // 15 000 DA
+  activeSession: null,
   todayCloture: null,
   cloturesHistory: [],
   lastCompletedSale: null,
@@ -151,9 +154,14 @@ export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
   loadActiveSession: async () => {
     if (!isTauri()) return;
     try {
-      const active = await invokeCommand<any | null>("get_active_cash_session");
+      const active = await invokeCommand<CashSessionDto | null>("get_active_cash_session");
       if (active) {
-        set({ initialCashFloatCents: active.initial_cash_float_cents });
+        set({
+          activeSession: active,
+          initialCashFloatCents: active.initial_cash_float_cents,
+        });
+      } else {
+        set({ activeSession: null });
       }
     } catch (err) {
       console.error("[caisseStore] Erreur chargement session active :", err);
@@ -166,14 +174,18 @@ export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
       throw new Error("Opération impossible : aucun utilisateur n'est actuellement authentifié.");
     }
     if (isTauri()) {
-      const session = await invokeCommand<any>("open_cash_session", {
+      const session = await invokeCommand<CashSessionDto>("open_cash_session", {
         dto: {
           utilisateur_id: currentUser.id,
           initial_cash_float_cents: initialCashFloatCents,
           notes: notes || null,
         },
       });
-      set({ initialCashFloatCents: session.initial_cash_float_cents, todayCloture: null });
+      set({
+        activeSession: session,
+        initialCashFloatCents: session.initial_cash_float_cents,
+        todayCloture: null,
+      });
       return session;
     }
     set({ initialCashFloatCents, todayCloture: null });
@@ -432,43 +444,39 @@ export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
   },
 
   getClotureDraft: (countedCashCents?: number) => {
-    const { initialCashFloatCents, currentCashier } = get();
-    const transactions = get().getTodayTransactions();
+    const { initialCashFloatCents, currentCashier, activeSession } = get();
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
 
-    let salesTotal = 0;
-    let rentalsTotal = 0;
-    let depositsTotal = 0;
+    if (activeSession) {
+      const theoreticalCash = activeSession.theoretical_cash_cents;
+      const countedCash = countedCashCents ?? theoreticalCash;
+      const discrepancy = countedCash - theoreticalCash;
 
-    const breakdown: ClotureCaisse["breakdown"] = {
-      especes: { total_cents: 0, transaction_count: 0 },
-      carte_bancaire: { total_cents: 0, transaction_count: 0 },
-      cheque: { total_cents: 0, transaction_count: 0 },
-      virement: { total_cents: 0, transaction_count: 0 },
-    };
+      return {
+        ...activeSession,
+        id: activeSession.id || `cloture-${todayStr}`,
+        cloture_number: activeSession.cloture_number || `Z-${todayStr.replace(/-/g, "")}-01`,
+        date: activeSession.date || todayStr,
+        closed_at: now.toISOString(),
+        closed_by_user_id: currentCashier.id,
+        closed_by_user_name: currentCashier.name,
+        closed_by_role: currentCashier.role,
+        status: "ouverte",
+        initial_cash_float_cents: activeSession.initial_cash_float_cents,
+        sales_total_cents: activeSession.sales_total_cents,
+        rentals_total_cents: activeSession.rentals_total_cents,
+        deposits_total_cents: activeSession.deposits_total_cents,
+        grand_total_cents: activeSession.grand_total_cents,
+        breakdown: activeSession.breakdown,
+        theoretical_cash_cents: theoreticalCash,
+        counted_cash_cents: countedCash,
+        discrepancy_cents: discrepancy,
+      };
+    }
 
-    transactions.forEach((tx) => {
-      if (tx.type === "vente_directe") {
-        salesTotal += tx.amount_cents;
-      } else if (tx.type === "location_caution") {
-        depositsTotal += tx.amount_cents;
-      } else {
-        rentalsTotal += tx.amount_cents;
-      }
-
-      const method = tx.payment_method;
-      if (method in breakdown) {
-        breakdown[method as keyof typeof breakdown].total_cents += tx.amount_cents;
-        breakdown[method as keyof typeof breakdown].transaction_count += 1;
-      }
-    });
-
-    const grandTotal = salesTotal + rentalsTotal;
-    const theoreticalCash = initialCashFloatCents + breakdown.especes.total_cents;
-    const countedCash = countedCashCents ?? theoreticalCash;
-    const discrepancy = countedCash - theoreticalCash;
-
+    // Fallback passif si session non encore initialisée (zéro calcul financier d'agrégation d'espèces)
+    const countedCash = countedCashCents ?? initialCashFloatCents;
     return {
       id: `cloture-${todayStr}`,
       cloture_number: `Z-${todayStr.replace(/-/g, "")}-01`,
@@ -479,14 +487,19 @@ export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
       closed_by_role: currentCashier.role,
       status: "ouverte",
       initial_cash_float_cents: initialCashFloatCents,
-      sales_total_cents: salesTotal,
-      rentals_total_cents: rentalsTotal,
-      deposits_total_cents: depositsTotal,
-      grand_total_cents: grandTotal,
-      breakdown,
-      theoretical_cash_cents: theoreticalCash,
+      sales_total_cents: 0,
+      rentals_total_cents: 0,
+      deposits_total_cents: 0,
+      grand_total_cents: 0,
+      breakdown: {
+        especes: { total_cents: 0, transaction_count: 0 },
+        carte_bancaire: { total_cents: 0, transaction_count: 0 },
+        cheque: { total_cents: 0, transaction_count: 0 },
+        virement: { total_cents: 0, transaction_count: 0 },
+      },
+      theoretical_cash_cents: initialCashFloatCents,
       counted_cash_cents: countedCash,
-      discrepancy_cents: discrepancy,
+      discrepancy_cents: countedCash - initialCashFloatCents,
     };
   },
 

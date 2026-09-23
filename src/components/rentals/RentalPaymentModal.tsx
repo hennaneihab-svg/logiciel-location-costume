@@ -47,14 +47,22 @@ export const RentalPaymentModal: React.FC<RentalPaymentModalProps> = ({
 
     try {
       setIsSubmitting(true);
-      await recordContractPayment(
+      const res = await recordContractPayment(
         contract.id,
         amountDA,
         paymentType,
         paymentMethod,
         notes.trim() || undefined
       );
-      toast.success(`Paiement de ${formatCents(amountDA)} enregistré avec succès.`);
+      if (res && (!res.has_active_session || res.outside_session_warning)) {
+        toast.warning(
+          res.outside_session_warning ||
+            `Paiement enregistré hors session de caisse : ce montant de ${formatCents(amountDA)} sera réconcilié lors de la prochaine clôture.`,
+          { duration: 6000 }
+        );
+      } else {
+        toast.success(`Paiement de ${formatCents(amountDA)} enregistré avec succès.`);
+      }
       onClose();
     } catch (err: any) {
       console.error(err);

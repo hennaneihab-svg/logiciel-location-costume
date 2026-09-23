@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   Lock,
   Unlock,
@@ -28,7 +28,12 @@ export const ClotureCaisseView: React.FC = () => {
     reopenCaisse,
     getTodayTransactions,
     getClotureDraft,
+    loadActiveSession,
   } = useCaisseStore();
+
+  useEffect(() => {
+    loadActiveSession();
+  }, [loadActiveSession]);
 
   const transactions = useMemo(() => getTodayTransactions(), [getTodayTransactions]);
 
