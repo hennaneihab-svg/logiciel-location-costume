@@ -4,6 +4,7 @@ import { useStockStore } from "@/store/stockStore";
 import { useClientStore } from "@/store/clientStore";
 import { useRentalStore } from "@/store/rentalStore";
 import { useCaisseStore } from "@/store/caisseStore";
+import { useAlertStore } from "@/store/alertStore";
 import * as tauriService from "@/services/tauri";
 import { toast } from "sonner";
 
@@ -214,4 +215,67 @@ describe("Module I — Restauration de Sauvegarde Déterminante et Bloquante", (
       "Chemin de sauvegarde SQLite manquant dans cette archive. Impossible d'effectuer la restauration native."
     );
   });
+
+  it("Cas 5 : Purge et régénération des alertes lors de la restauration (aucune alerte orpheline)", async () => {
+    vi.spyOn(tauriService, "isTauri").mockReturnValue(false);
+
+    // 1. Injecter une fausse alerte orpheline pré-existante (liée à un contrat imaginaire qui n'existera pas dans la sauvegarde)
+    useAlertStore.setState({
+      alerts: [
+        {
+          id: "alr-ghost-01",
+          dedup_key: "loc-ghost-01_retard_retour",
+          category: "retard_retour",
+          severity: "critique",
+          status: "active",
+          title: "Retard fantôme",
+          description: "Contrat fantôme qui ne doit plus exister",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          contract_id: "loc-ghost-01",
+          notification_sent: false,
+        },
+      ],
+    });
+
+    expect(useAlertStore.getState().alerts.some((a) => a.id === "alr-ghost-01")).toBe(true);
+
+    // 2. Définir une sauvegarde avec un contrat valide
+    const backupId = "test-bak-purge-alerts-05";
+    const testBackup = {
+      id: backupId,
+      filename: "backup_purge_test.zip",
+      created_at: new Date().toISOString(),
+      size_bytes: 5000,
+      trigger_type: "manual" as const,
+      records_count: { articles: 0, clients: 0, locations: 1, paiements: 0, ventes: 0, pdf_count: 0 },
+      raw_data: {
+        locations: [
+          {
+            id: "loc-fresh-01",
+            contract_number: "LOC-2026-8888",
+            status: "en_cours",
+            customer_name: "Nouveau Client Valide",
+            return_date_scheduled: new Date().toISOString().slice(0, 10), // Jour J
+            items: [{ article_name: "Smoking Noir Prestige", variant_size: "52" }],
+          },
+        ],
+      },
+    };
+
+    useSettingsStore.setState((state) => ({
+      backups: [testBackup, ...state.backups],
+    }));
+
+    // 3. Exécuter restoreBackup
+    await useSettingsStore.getState().restoreBackup(backupId);
+
+    // 4. Vérifier que l'alerte fantôme a bien été PURGÉE
+    const alertsAfter = useAlertStore.getState().alerts;
+    expect(alertsAfter.some((a) => a.id === "alr-ghost-01")).toBe(false);
+
+    // 5. Vérifier que la nouvelle alerte pour le contrat restauré a été GÉNÉRÉE
+    expect(alertsAfter.some((a) => a.contract_id === "loc-fresh-01")).toBe(true);
+  });
 });
+

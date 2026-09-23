@@ -13,6 +13,7 @@ import { useStockStore } from "@/store/stockStore";
 import { useClientStore } from "@/store/clientStore";
 import { useRentalStore } from "@/store/rentalStore";
 import { useCaisseStore } from "@/store/caisseStore";
+import { useAlertStore } from "@/store/alertStore";
 import { dbStorage } from "@/services/dbStorage";
 import { invokeCommand, isTauri } from "@/services/tauri";
 import { toast } from "sonner";
@@ -534,6 +535,8 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
       if (dump.locations) {
         useRentalStore.setState({ contracts: dump.locations });
         dbStorage.save(dbStorage.KEYS.CONTRACTS, dump.locations);
+        // Purge des alertes orphelines et recalcul déterminé à partir des contrats restaurés
+        useAlertStore.getState().resetAndRecomputeAlerts(dump.locations);
       }
       if (dump.ventes) {
         useCaisseStore.setState({ salesHistory: dump.ventes });

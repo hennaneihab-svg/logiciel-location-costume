@@ -1196,3 +1196,53 @@ async fn test_unassigned_payment_reconciliation_at_close_session() {
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[tokio::test]
+async fn test_migration_0012_performance_indexes() {
+    let test_dir = std::env::temp_dir().join(format!("test_migration_0012_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+    let pool = db::init_db(&test_dir).await.expect("DB init ok");
+
+    // 1. Vérifier que la migration 0012 est bien enregistrée
+    let row12: Option<(i64,)> = sqlx::query_as("SELECT version FROM _migrations WHERE version = 12")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(row12.is_some(), "Migration 0012 bien enregistrée dans _migrations");
+
+    // 2. Vérifier que les index créés par 0012 existent bien dans sqlite_master
+    let indexes: Vec<(String,)> = sqlx::query_as(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN (
+            'idx_paiements_date',
+            'idx_locations_statut_retour',
+            'idx_locations_date_retrait',
+            'idx_ventes_date',
+            'idx_ventes_client',
+            'idx_ventes_statut',
+            'idx_lignes_vente_vente',
+            'idx_lignes_vente_article',
+            'idx_lignes_vente_variante',
+            'idx_mouvements_date',
+            'idx_mouvements_type',
+            'idx_sessions_caisse_statut_date'
+        )"
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let index_names: Vec<String> = indexes.into_iter().map(|i| i.0).collect();
+
+    assert!(index_names.contains(&"idx_paiements_date".to_string()), "Index idx_paiements_date présent");
+    assert!(index_names.contains(&"idx_locations_statut_retour".to_string()), "Index idx_locations_statut_retour présent");
+    assert!(index_names.contains(&"idx_locations_date_retrait".to_string()), "Index idx_locations_date_retrait présent");
+    assert!(index_names.contains(&"idx_ventes_date".to_string()), "Index idx_ventes_date présent");
+    assert!(index_names.contains(&"idx_ventes_client".to_string()), "Index idx_ventes_client présent");
+    assert!(index_names.contains(&"idx_lignes_vente_vente".to_string()), "Index idx_lignes_vente_vente présent");
+    assert!(index_names.contains(&"idx_mouvements_date".to_string()), "Index idx_mouvements_date présent");
+    assert!(index_names.contains(&"idx_sessions_caisse_statut_date".to_string()), "Index idx_sessions_caisse_statut_date présent");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+

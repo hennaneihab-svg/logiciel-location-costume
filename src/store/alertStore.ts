@@ -249,6 +249,19 @@ interface AlertStoreState {
   setFilters: (partial: Partial<AlertFilters>) => void;
   resetFilters: () => void;
 
+  // Actions — Réinitialisation & Nettoyage des alertes orphelines (Restauration / Sync)
+  resetAndRecomputeAlerts: (
+    contracts: Array<{
+      id: string;
+      contract_number: string;
+      status: string;
+      customer_name: string;
+      customer_phone?: string;
+      return_date_scheduled: string;
+      items: Array<{ article_name: string; variant_size?: string }>;
+    }>
+  ) => void;
+
   // Sélecteurs
   getActiveCount: () => number;
   getCriticalCount: () => number;
@@ -502,6 +515,28 @@ export const useAlertStore = create<AlertStoreState>((set, get) => ({
     });
 
     return newAlertIds;
+  },
+
+  resetAndRecomputeAlerts: (contracts) => {
+    // 1. Purge de toutes les anciennes alertes de location pour éliminer les orphelines
+    const rentalCategories = new Set([
+      "retard_retour",
+      "retour_jour_j",
+      "retour_j1",
+      "retour_j2",
+      "retour_j3",
+    ]);
+
+    set((state) => {
+      const nonRentalAlerts = state.alerts.filter((a) => !rentalCategories.has(a.category));
+      dbStorage.save(dbStorage.KEYS.ALERTS, nonRentalAlerts);
+      return { alerts: nonRentalAlerts };
+    });
+
+    // 2. Recalcul propre et déterministe depuis les contrats fournis
+    if (contracts && contracts.length > 0) {
+      get().generateAlertsFromRentals(contracts);
+    }
   },
 
   // ── Traçabilité ────────────────────────────────────────────────────────
