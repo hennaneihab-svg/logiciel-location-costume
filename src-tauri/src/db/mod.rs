@@ -12,6 +12,7 @@ pub const MIGRATION_0006: &str = include_str!("../../migrations/0006_fix_lignes_
 pub const MIGRATION_0007: &str = include_str!("../../migrations/0007_annual_numbering_counters.sql");
 pub const MIGRATION_0008: &str = include_str!("../../migrations/0008_pressing.sql");
 pub const MIGRATION_0009: &str = include_str!("../../migrations/0009_rename_sessions_caisse_totals_centimes.sql");
+pub const MIGRATION_0010: &str = include_str!("../../migrations/0010_restore_sessions_caisse_french_column_names.sql");
 
 pub struct DbState {
     pub pool: SqlitePool,
@@ -457,6 +458,99 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
 
                 let now = chrono::Utc::now().to_rfc3339();
                 sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (9, '0009_rename_sessions_caisse_totals_centimes', ?)")
+                    .bind(now)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK;").execute(&mut *conn).await;
+                return Err(e);
+            }
+        }
+    }
+
+    // Migration 0010 (Rétablissement des noms de colonnes français d'origine pour sessions_caisse)
+    let row10: Option<(i64,)> = sqlx::query_as("SELECT version FROM _migrations WHERE version = 10")
+        .fetch_optional(pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+    if row10.is_none() {
+        let mut conn = pool.acquire().await.map_err(AppError::DatabaseError)?;
+        sqlx::query("BEGIN IMMEDIATE;")
+            .execute(&mut *conn)
+            .await
+            .map_err(AppError::DatabaseError)?;
+
+        let migration_res: Result<(), AppError> = async {
+            let columns: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('sessions_caisse')")
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(AppError::DatabaseError)?;
+            let col_names: Vec<String> = columns.into_iter().map(|c| c.0).collect();
+
+            if col_names.contains(&"rentals_total_centimes".to_string()) && !col_names.contains(&"total_locations_centimes".to_string()) {
+                sqlx::query("ALTER TABLE sessions_caisse RENAME COLUMN rentals_total_centimes TO total_locations_centimes;")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+            } else if col_names.contains(&"rentals_total_cents".to_string()) && !col_names.contains(&"total_locations_centimes".to_string()) {
+                sqlx::query("ALTER TABLE sessions_caisse RENAME COLUMN rentals_total_cents TO total_locations_centimes;")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+            }
+
+            if col_names.contains(&"deposits_total_centimes".to_string()) && !col_names.contains(&"total_cautions_centimes".to_string()) {
+                sqlx::query("ALTER TABLE sessions_caisse RENAME COLUMN deposits_total_centimes TO total_cautions_centimes;")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+            } else if col_names.contains(&"deposits_total_cents".to_string()) && !col_names.contains(&"total_cautions_centimes".to_string()) {
+                sqlx::query("ALTER TABLE sessions_caisse RENAME COLUMN deposits_total_cents TO total_cautions_centimes;")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+            }
+
+            if col_names.contains(&"sales_total_centimes".to_string()) && !col_names.contains(&"total_ventes_centimes".to_string()) {
+                sqlx::query("ALTER TABLE sessions_caisse RENAME COLUMN sales_total_centimes TO total_ventes_centimes;")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+            } else if col_names.contains(&"sales_total_cents".to_string()) && !col_names.contains(&"total_ventes_centimes".to_string()) {
+                sqlx::query("ALTER TABLE sessions_caisse RENAME COLUMN sales_total_cents TO total_ventes_centimes;")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+            }
+
+            // Vérification de l'intégrité référentielle
+            let fk_violations: Vec<(String, Option<i64>, String, i64)> =
+                sqlx::query_as("PRAGMA foreign_key_check;")
+                    .fetch_all(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+
+            if !fk_violations.is_empty() {
+                return Err(AppError::DatabaseError(sqlx::Error::Configuration(
+                    format!("Violations de clés étrangères détectées après migration 0010 : {:?}", fk_violations).into()
+                )));
+            }
+
+            Ok(())
+        }.await;
+
+        match migration_res {
+            Ok(()) => {
+                sqlx::query("COMMIT;")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+
+                let now = chrono::Utc::now().to_rfc3339();
+                sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (10, '0010_restore_sessions_caisse_french_column_names', ?)")
                     .bind(now)
                     .execute(&mut *conn)
                     .await

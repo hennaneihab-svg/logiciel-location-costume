@@ -835,6 +835,22 @@ async fn test_migration_0009_sessions_caisse_totals_rename() {
     }
     sqlx::query("INSERT INTO _migrations VALUES (6, '0006_fix_lignes_location_fk_restrict', ?)").bind(&now).execute(&pool).await.unwrap();
 
+    for stmt in db::MIGRATION_0007.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (7, '0007_annual_numbering_counters', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    for stmt in db::MIGRATION_0008.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (8, '0008_pressing', ?)").bind(&now).execute(&pool).await.unwrap();
+
     // Insérer une session avec les anciens noms de colonnes (total_locations_centimes, total_cautions_centimes, total_ventes_centimes)
     sqlx::query(
         "INSERT INTO sessions_caisse (
@@ -850,8 +866,14 @@ async fn test_migration_0009_sessions_caisse_totals_rename() {
     .await
     .expect("Insert legacy session ok");
 
-    // Maintenant, exécuter la suite complète de migrations (qui va déclencher 0009)
-    db::run_migrations(&pool).await.expect("Migrations up to 0009 ok");
+    // Appliquer la migration 0009
+    for stmt in db::MIGRATION_0009.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (9, '0009_rename_sessions_caisse_totals_centimes', ?)").bind(&now).execute(&pool).await.unwrap();
 
     // Vérifier que la migration 9 est bien inscrite
     let row9: Option<(i64,)> = sqlx::query_as("SELECT version FROM _migrations WHERE version = 9")
@@ -885,6 +907,166 @@ async fn test_migration_0009_sessions_caisse_totals_rename() {
     assert_eq!(s_cents, 25000, "Ventes préservées à 25 000 DA");
     assert_eq!(r_cents, 15000, "Locations préservées à 15 000 DA");
     assert_eq!(d_cents, 40000, "Cautions préservées à 40 000 DA");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_migration_0010_restore_french_column_names() {
+    let test_dir = std::env::temp_dir().join(format!("test_mig_0010_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let db_path = test_dir.join("costume_rental.db");
+    let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    let opts = SqliteConnectOptions::from_str(&db_url)
+        .expect("Valid db url")
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true);
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts)
+        .await
+        .expect("Failed to connect");
+
+    // 1. Initialiser une base à l'état post-0009
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS _migrations (
+            version INTEGER PRIMARY KEY,
+            nom TEXT NOT NULL,
+            appliquee_le TEXT NOT NULL
+        );"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    for stmt in db::MIGRATION_0001.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (1, '0001_initial_schema', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    for stmt in db::MIGRATION_0002.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (2, '0002_seed_demo_data', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    for stmt in db::MIGRATION_0005.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (5, '0005_rental_caisse_sqlite_tables', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    for stmt in db::MIGRATION_0006.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (6, '0006_fix_lignes_location_fk_restrict', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    for stmt in db::MIGRATION_0007.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (7, '0007_annual_numbering_counters', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    for stmt in db::MIGRATION_0008.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (8, '0008_pressing', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    // Appliquer 0009
+    for stmt in db::MIGRATION_0009.split(';') {
+        let s = stmt.trim();
+        if !s.is_empty() {
+            sqlx::query(s).execute(&pool).await.unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO _migrations VALUES (9, '0009_rename_sessions_caisse_totals_centimes', ?)").bind(&now).execute(&pool).await.unwrap();
+
+    // Insérer une session avec le schéma post-0009 (rentals_total_centimes, deposits_total_centimes, sales_total_centimes)
+    sqlx::query(
+        "INSERT INTO sessions_caisse (
+            id, numero_session, utilisateur_id, date_session, statut,
+            fonds_initial_centimes, total_especes_theorique_centimes,
+            sales_total_centimes, rentals_total_centimes, deposits_total_centimes,
+            total_especes_centimes, total_carte_centimes, total_cheque_centimes, total_virement_centimes,
+            opened_at
+        ) VALUES ('ses-legacy-10', 'Z-20260923-01', 'usr-001', '2026-09-23', 'cloturee', 10000, 35000, 25000, 15000, 40000, 25000, 15000, 0, 0, ?)"
+    )
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Insert post-0009 session ok");
+
+    // 2. Exécuter le système de migrations global (qui doit appliquer la migration 0010)
+    db::run_migrations(&pool).await.expect("Run migrations applying 0010 ok");
+
+    // 3. Vérifier que la version 10 est bien enregistrée
+    let row10: Option<(i64,)> = sqlx::query_as("SELECT version FROM _migrations WHERE version = 10")
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(row10.is_some(), "Migration 0010 bien enregistrée");
+
+    // 4. Vérifier les colonnes restaurées dans sessions_caisse
+    let cols: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('sessions_caisse')")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let col_names: Vec<String> = cols.into_iter().map(|c| c.0).collect();
+
+    assert!(col_names.contains(&"total_locations_centimes".to_string()), "Colonne total_locations_centimes restaurée");
+    assert!(col_names.contains(&"total_cautions_centimes".to_string()), "Colonne total_cautions_centimes restaurée");
+    assert!(col_names.contains(&"total_ventes_centimes".to_string()), "Colonne total_ventes_centimes restaurée");
+
+    assert!(!col_names.contains(&"rentals_total_centimes".to_string()), "rentals_total_centimes supprimée");
+    assert!(!col_names.contains(&"deposits_total_centimes".to_string()), "deposits_total_centimes supprimée");
+    assert!(!col_names.contains(&"sales_total_centimes".to_string()), "sales_total_centimes supprimée");
+
+    // 5. Vérifier qu'aucune donnée n'a été perdue
+    use sqlx::Row;
+    let row = sqlx::query("SELECT total_ventes_centimes, total_locations_centimes, total_cautions_centimes FROM sessions_caisse WHERE id = 'ses-legacy-10'")
+        .fetch_one(&pool)
+        .await
+        .expect("Row fetch ok");
+
+    let s_cents: i64 = row.get("total_ventes_centimes");
+    let r_cents: i64 = row.get("total_locations_centimes");
+    let d_cents: i64 = row.get("total_cautions_centimes");
+
+    assert_eq!(s_cents, 25000, "total_ventes_centimes préservé à 25 000 DA");
+    assert_eq!(r_cents, 15000, "total_locations_centimes préservé à 15 000 DA");
+    assert_eq!(d_cents, 40000, "total_cautions_centimes préservé à 40 000 DA");
+
+    // 6. Vérifier l'intégrité des clés étrangères
+    let fk_violations: Vec<(String, Option<i64>, String, i64)> =
+        sqlx::query_as("PRAGMA foreign_key_check;")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(fk_violations.is_empty(), "Aucune violation FK après migration 0010");
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);

@@ -954,7 +954,7 @@ pub async fn execute_create_rental(pool: &sqlx::SqlitePool, dto: CreateRentalCon
                 };
                 let update_sql = format!(
                     "UPDATE sessions_caisse 
-                     SET rentals_total_centimes = rentals_total_centimes + ?,
+                     SET total_locations_centimes = total_locations_centimes + ?,
                          {} = {} + ?
                      WHERE id = ?",
                     col_name, col_name
@@ -1603,7 +1603,7 @@ pub async fn execute_create_direct_sale(pool: &sqlx::SqlitePool, dto: CreateDire
             };
             let update_sql = format!(
                 "UPDATE sessions_caisse 
-                 SET sales_total_centimes = sales_total_centimes + ?,
+                 SET total_ventes_centimes = total_ventes_centimes + ?,
                      {} = {} + ?
                  WHERE id = ?",
                 col_name, col_name
@@ -1681,9 +1681,9 @@ pub async fn fetch_cash_session_dto_by_id(pool: &sqlx::SqlitePool, session_id: &
     let closed_by_role: Option<String> = Some(row.get("user_role"));
     let status: String = row.get("statut");
     let initial_cash_float_cents: i64 = row.get("fonds_initial_centimes");
-    let sales_total_cents: i64 = row.try_get("sales_total_centimes").or_else(|_| row.try_get("total_ventes_centimes")).unwrap_or(0);
-    let rentals_total_cents: i64 = row.try_get("rentals_total_centimes").or_else(|_| row.try_get("total_locations_centimes")).unwrap_or(0);
-    let deposits_total_cents: i64 = row.try_get("deposits_total_centimes").or_else(|_| row.try_get("total_cautions_centimes")).unwrap_or(0);
+    let sales_total_cents: i64 = row.try_get("total_ventes_centimes").or_else(|_| row.try_get("sales_total_centimes")).unwrap_or(0);
+    let rentals_total_cents: i64 = row.try_get("total_locations_centimes").or_else(|_| row.try_get("rentals_total_centimes")).unwrap_or(0);
+    let deposits_total_cents: i64 = row.try_get("total_cautions_centimes").or_else(|_| row.try_get("deposits_total_centimes")).unwrap_or(0);
     let grand_total_cents = sales_total_cents + rentals_total_cents;
 
     let total_especes: i64 = row.get("total_especes_centimes");
@@ -1768,7 +1768,7 @@ pub async fn execute_open_cash_session(pool: &sqlx::SqlitePool, dto: OpenCashSes
             "INSERT INTO sessions_caisse (
                 id, numero_session, utilisateur_id, date_session, statut,
                 fonds_initial_centimes, total_especes_theorique_centimes,
-                sales_total_centimes, rentals_total_centimes, deposits_total_centimes,
+                total_ventes_centimes, total_locations_centimes, total_cautions_centimes,
                 total_especes_centimes, total_carte_centimes, total_cheque_centimes, total_virement_centimes,
                 notes, opened_at
             ) VALUES (?, ?, ?, ?, 'ouverte', ?, ?, 0, 0, 0, 0, 0, 0, 0, ?, ?)"
@@ -1929,9 +1929,9 @@ pub async fn execute_close_cash_session(pool: &sqlx::SqlitePool, dto: CloseCashS
         sqlx::query(
             "UPDATE sessions_caisse 
              SET statut = 'cloturee',
-                 rentals_total_centimes = ?,
-                 deposits_total_centimes = ?,
-                 sales_total_centimes = ?,
+                 total_locations_centimes = ?,
+                 total_cautions_centimes = ?,
+                 total_ventes_centimes = ?,
                  total_especes_theorique_centimes = ?,
                  total_especes_compte_centimes = ?,
                  total_especes_centimes = ?,
@@ -2122,7 +2122,7 @@ pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentD
                 let refund_abs = dto.montant_centimes.abs();
                 let update_sql = format!(
                     "UPDATE sessions_caisse 
-                     SET rentals_total_centimes = rentals_total_centimes - ?,
+                     SET total_locations_centimes = total_locations_centimes - ?,
                          {} = {} - ?
                      WHERE id = ?",
                     col_name, col_name
@@ -2137,7 +2137,7 @@ pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentD
             } else if dto.type_paiement == "caution" {
                 let update_sql = format!(
                     "UPDATE sessions_caisse 
-                     SET deposits_total_centimes = deposits_total_centimes + ?,
+                     SET total_cautions_centimes = total_cautions_centimes + ?,
                          {} = {} + ?
                      WHERE id = ?",
                     col_name, col_name
@@ -2152,7 +2152,7 @@ pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentD
             } else if dto.vente_id.is_some() {
                 let update_sql = format!(
                     "UPDATE sessions_caisse 
-                     SET sales_total_centimes = sales_total_centimes + ?,
+                     SET total_ventes_centimes = total_ventes_centimes + ?,
                          {} = {} + ?
                      WHERE id = ?",
                     col_name, col_name
@@ -2167,7 +2167,7 @@ pub async fn execute_record_payment(pool: &sqlx::SqlitePool, dto: RecordPaymentD
             } else {
                 let update_sql = format!(
                     "UPDATE sessions_caisse 
-                     SET rentals_total_centimes = rentals_total_centimes + ?,
+                     SET total_locations_centimes = total_locations_centimes + ?,
                          {} = {} + ?
                      WHERE id = ?",
                     col_name, col_name
