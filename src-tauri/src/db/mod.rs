@@ -13,6 +13,7 @@ pub const MIGRATION_0007: &str = include_str!("../../migrations/0007_annual_numb
 pub const MIGRATION_0008: &str = include_str!("../../migrations/0008_pressing.sql");
 pub const MIGRATION_0009: &str = include_str!("../../migrations/0009_rename_sessions_caisse_totals_centimes.sql");
 pub const MIGRATION_0010: &str = include_str!("../../migrations/0010_restore_sessions_caisse_french_column_names.sql");
+pub const MIGRATION_0011: &str = include_str!("../../migrations/0011_settings_and_parameters.sql");
 
 pub struct DbState {
     pub pool: SqlitePool,
@@ -551,6 +552,54 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
 
                 let now = chrono::Utc::now().to_rfc3339();
                 sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (10, '0010_restore_sessions_caisse_french_column_names', ?)")
+                    .bind(now)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+            }
+            Err(e) => {
+                let _ = sqlx::query("ROLLBACK;").execute(&mut *conn).await;
+                return Err(e);
+            }
+        }
+    }
+
+    // Migration 0011 (Table parametres et reglages de l'etablissement)
+    let row11: Option<(i64,)> = sqlx::query_as("SELECT version FROM _migrations WHERE version = 11")
+        .fetch_optional(pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+    if row11.is_none() {
+        let mut conn = pool.acquire().await.map_err(AppError::DatabaseError)?;
+        sqlx::query("BEGIN IMMEDIATE;")
+            .execute(&mut *conn)
+            .await
+            .map_err(AppError::DatabaseError)?;
+
+        let migration_res: Result<(), AppError> = async {
+            for stmt in MIGRATION_0011.split(';') {
+                let trimmed = stmt.trim();
+                if !trimmed.is_empty() {
+                    sqlx::query(trimmed)
+                        .execute(&mut *conn)
+                        .await
+                        .map_err(AppError::DatabaseError)?;
+                }
+            }
+
+            Ok(())
+        }.await;
+
+        match migration_res {
+            Ok(()) => {
+                sqlx::query("COMMIT;")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
+
+                let now = chrono::Utc::now().to_rfc3339();
+                sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (11, '0011_settings_and_parameters', ?)")
                     .bind(now)
                     .execute(&mut *conn)
                     .await

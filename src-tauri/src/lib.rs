@@ -93,6 +93,11 @@ pub fn run() {
             commands::get_pressing_photo_full,
             commands::get_pressing_module_active,
             commands::set_pressing_module_active,
+            // Paramètres & Import historique
+            commands::get_setting,
+            commands::set_setting,
+            commands::get_all_settings,
+            commands::import_legacy_localstorage,
         ])
         .run(tauri::generate_context!())
         .expect("Erreur fatale lors du lancement de l'application Tauri");

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRentalStore } from "@/store/rentalStore";
 import { useCaisseStore } from "@/store/caisseStore";
-import { isTauri } from "@/services/tauri";
+import { useSettingsStore } from "@/store/settingsStore";
+import { isTauri, invokeCommand } from "@/services/tauri";
 
 export type AppInitStatus = "initializing" | "ready" | "error";
 
@@ -22,7 +23,27 @@ export function useAppInit(): AppInitState {
 
     try {
       if (isTauri()) {
-        // Chargement des contrats et des données de caisse depuis SQLite
+        // 1. Chargement des paramètres depuis SQLite (avec migration one-shot si existant)
+        await useSettingsStore.getState().loadSettings();
+
+        // 2. Migration automatique one-shot des données historiques localStorage vers SQLite
+        if (typeof window !== "undefined" && window.localStorage) {
+          const legacyContractsRaw = localStorage.getItem("atelier_prestige_db_contracts");
+          const legacySalesRaw = localStorage.getItem("atelier_prestige_db_sales");
+          if (legacyContractsRaw || legacySalesRaw) {
+            try {
+              const contracts = legacyContractsRaw ? JSON.parse(legacyContractsRaw) : undefined;
+              const sales = legacySalesRaw ? JSON.parse(legacySalesRaw) : undefined;
+              if ((contracts && contracts.length > 0) || (sales && sales.length > 0)) {
+                await invokeCommand("import_legacy_localstorage", { payload: { contracts, sales } });
+              }
+            } catch (e) {
+              console.warn("[useAppInit] Import legacy localStorage ignoré ou déjà effectué:", e);
+            }
+          }
+        }
+
+        // 3. Chargement des contrats et des données de caisse depuis SQLite
         await useRentalStore.getState().loadContracts();
         await useCaisseStore.getState().loadSales();
         await useCaisseStore.getState().loadActiveSession();

@@ -6,6 +6,9 @@ use crate::models::*;
 pub mod pressing;
 pub use pressing::*;
 
+pub mod settings;
+pub use settings::*;
+
 // ============================================================================
 // COMMANDES IPC CRUD AVEC VALIDATION RUST
 // ============================================================================

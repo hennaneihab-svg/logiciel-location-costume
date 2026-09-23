@@ -24,6 +24,10 @@ interface SettingsStoreState {
   backups: BackupEntry[];
   auditLogs: AuditLogEntry[];
   isBackingUp: boolean;
+  isLoaded: boolean;
+
+  // Actions Initialisation SQLite & Migration one-shot
+  loadSettings: () => Promise<void>;
 
   // Actions Paramètres
   updateBoutiqueSettings: (updated: Partial<BoutiqueSettings>) => void;
@@ -223,18 +227,103 @@ const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
   },
 ];
 
+// Helper de persistance SQLite (n'écrit JAMAIS dans localStorage)
+async function persistSettingIpc(cle: string, valeur: unknown): Promise<void> {
+  if (isTauri()) {
+    try {
+      await invokeCommand("set_setting", { cle, valeur: JSON.stringify(valeur) });
+    } catch (err) {
+      console.error(`[settingsStore] Erreur persistance SQLite pour "${cle}":`, err);
+    }
+  }
+}
+
+// Fallback de lecture seule au démarrage (sans jamais faire de setItem)
+function readFallbackOnly<T>(key: string, defaultVal: T): T {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const raw = localStorage.getItem(key);
+      if (raw) return JSON.parse(raw) as T;
+    }
+  } catch (_) {}
+  return defaultVal;
+}
+
 export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
-  boutique: dbStorage.load<BoutiqueSettings>(dbStorage.KEYS.SETTINGS, INITIAL_BOUTIQUE),
+  boutique: readFallbackOnly<BoutiqueSettings>(dbStorage.KEYS.SETTINGS, INITIAL_BOUTIQUE),
   numbering: INITIAL_NUMBERING,
   tax: INITIAL_TAX,
-  backups: dbStorage.load<BackupEntry[]>(dbStorage.KEYS.BACKUPS, INITIAL_BACKUPS),
-  auditLogs: dbStorage.load<AuditLogEntry[]>(dbStorage.KEYS.AUDIT_LOGS, INITIAL_AUDIT_LOGS),
+  backups: readFallbackOnly<BackupEntry[]>(dbStorage.KEYS.BACKUPS, INITIAL_BACKUPS),
+  auditLogs: readFallbackOnly<AuditLogEntry[]>(dbStorage.KEYS.AUDIT_LOGS, INITIAL_AUDIT_LOGS),
   isBackingUp: false,
+  isLoaded: false,
+
+  loadSettings: async () => {
+    if (isTauri()) {
+      try {
+        const all = await invokeCommand<Record<string, string>>("get_all_settings");
+        if (all) {
+          const updates: Partial<SettingsStoreState> = { isLoaded: true };
+          if (all.boutique) {
+            try { updates.boutique = JSON.parse(all.boutique); } catch (_) {}
+          }
+          if (all.numerotation) {
+            try { updates.numbering = JSON.parse(all.numerotation); } catch (_) {}
+          }
+          if (all.fiscalite) {
+            try { updates.tax = JSON.parse(all.fiscalite); } catch (_) {}
+          }
+          if (all.backups) {
+            try { updates.backups = JSON.parse(all.backups); } catch (_) {}
+          }
+          if (all.audit_logs) {
+            try { updates.auditLogs = JSON.parse(all.audit_logs); } catch (_) {}
+          }
+
+          // Migration one-shot : si localStorage contient des réglages personnalisés non encore en base SQLite
+          if (typeof window !== "undefined" && window.localStorage) {
+            const legacyBoutiqueRaw = localStorage.getItem(dbStorage.KEYS.SETTINGS);
+            if (legacyBoutiqueRaw && (!all.boutique || all.boutique.includes("Atelier Prestige"))) {
+              try {
+                const parsed = JSON.parse(legacyBoutiqueRaw);
+                updates.boutique = parsed;
+                await persistSettingIpc("boutique", parsed);
+              } catch (_) {}
+            }
+
+            const legacyBackupsRaw = localStorage.getItem(dbStorage.KEYS.BACKUPS);
+            if (legacyBackupsRaw && (!all.backups || all.backups === "[]")) {
+              try {
+                const parsed = JSON.parse(legacyBackupsRaw);
+                updates.backups = parsed;
+                await persistSettingIpc("backups", parsed);
+              } catch (_) {}
+            }
+
+            const legacyLogsRaw = localStorage.getItem(dbStorage.KEYS.AUDIT_LOGS);
+            if (legacyLogsRaw && (!all.audit_logs || all.audit_logs === "[]")) {
+              try {
+                const parsed = JSON.parse(legacyLogsRaw);
+                updates.auditLogs = parsed;
+                await persistSettingIpc("audit_logs", parsed);
+              } catch (_) {}
+            }
+          }
+
+          set(updates);
+          return;
+        }
+      } catch (err) {
+        console.error("[settingsStore] Erreur loadSettings SQLite:", err);
+      }
+    }
+    set({ isLoaded: true });
+  },
 
   updateBoutiqueSettings: (updated) => {
     set((state) => {
       const newBoutique = { ...state.boutique, ...updated };
-      dbStorage.save(dbStorage.KEYS.SETTINGS, newBoutique);
+      persistSettingIpc("boutique", newBoutique);
       get().logAuditEvent(
         "UPDATE_SETTINGS",
         "parametres",
@@ -248,6 +337,7 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
   updateNumberingSettings: (updated) => {
     set((state) => {
       const newNum = { ...state.numbering, ...updated };
+      persistSettingIpc("numerotation", newNum);
       get().logAuditEvent(
         "UPDATE_SETTINGS",
         "parametres",
@@ -261,6 +351,7 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
   updateTaxSettings: (updated) => {
     set((state) => {
       const newTax = { ...state.tax, ...updated };
+      persistSettingIpc("fiscalite", newTax);
       get().logAuditEvent(
         "UPDATE_SETTINGS",
         "parametres",
@@ -292,11 +383,13 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
         meta: {
           app: "Atelier Prestige — Location & Cérémonie",
           version: "0.1.0",
-          schema_version: "0002",
+          schema_version: "0011",
           exported_at: now.toISOString(),
           trigger_type: triggerType,
         },
         boutique: get().boutique,
+        numbering: get().numbering,
+        tax: get().tax,
         articles: stockArticles,
         clients: clientsList,
         locations: rentalContracts,
@@ -364,7 +457,7 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
       // Règle imposée : GARDER LES 30 DERNIÈRES SAUVEGARDES (Rotation automatique)
       set((state) => {
         const updated = [newEntry, ...state.backups].slice(0, 30);
-        dbStorage.save(dbStorage.KEYS.BACKUPS, updated);
+        persistSettingIpc("backups", updated);
         return { backups: updated, isBackingUp: false };
       });
 
@@ -448,7 +541,15 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
       }
       if (dump.boutique) {
         set({ boutique: dump.boutique });
-        dbStorage.save(dbStorage.KEYS.SETTINGS, dump.boutique);
+        persistSettingIpc("boutique", dump.boutique);
+      }
+      if (dump.numbering) {
+        set({ numbering: dump.numbering });
+        persistSettingIpc("numerotation", dump.numbering);
+      }
+      if (dump.tax) {
+        set({ tax: dump.tax });
+        persistSettingIpc("fiscalite", dump.tax);
       }
     }
 
@@ -464,7 +565,7 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
   deleteBackup: (id) => {
     set((state) => {
       const updated = state.backups.filter((b) => b.id !== id);
-      dbStorage.save(dbStorage.KEYS.BACKUPS, updated);
+      persistSettingIpc("backups", updated);
       return { backups: updated };
     });
   },
@@ -487,13 +588,13 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
 
     set((state) => {
       const updatedLogs = [newLog, ...state.auditLogs];
-      dbStorage.save(dbStorage.KEYS.AUDIT_LOGS, updatedLogs);
+      persistSettingIpc("audit_logs", updatedLogs);
       return { auditLogs: updatedLogs };
     });
   },
 
   clearAuditLogs: () => {
-    dbStorage.save(dbStorage.KEYS.AUDIT_LOGS, []);
+    persistSettingIpc("audit_logs", []);
     set({ auditLogs: [] });
   },
 }));
