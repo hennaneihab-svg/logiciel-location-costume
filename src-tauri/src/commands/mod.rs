@@ -1426,7 +1426,7 @@ pub async fn execute_validate_rental_pickup(
         for line in lines {
             if let Some(ref var_id) = line.1 {
                 let mvt_id = format!("mvt-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
-                let motif = format!("Retrait physique validé pour contrat {}", loc.numero_location);
+                let motif = format!("Retrait physique validé pour contrat {}", loc_num);
                 sqlx::query(
                     "INSERT INTO mouvements_stock (id, variante_id, utilisateur_id, type_mouvement, motif, date_mouvement)
                      VALUES (?, ?, ?, 'depart_location', ?, ?)"
