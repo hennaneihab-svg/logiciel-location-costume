@@ -79,16 +79,32 @@ export default {
             900: "#12130F",
           },
         },
-        // Codes couleur métier adoucis sur fond lin
+        // Codes couleur métier adoucis sur fond lin validés en H0
         status: {
+          reserved: "var(--status-reserved)",
+          "reserved-bg": "var(--status-reserved-bg)",
+          "reserved-border": "var(--status-reserved-border)",
+          "in-progress": "var(--status-in-progress)",
+          "in-progress-bg": "var(--status-in-progress-bg)",
+          "in-progress-border": "var(--status-in-progress-border)",
           rental: "var(--status-rental)",
           "rental-bg": "var(--status-rental-bg)",
+          "rental-border": "var(--status-rental-border)",
+          cleaning: "var(--status-cleaning)",
+          "cleaning-bg": "var(--status-cleaning-bg)",
+          "cleaning-border": "var(--status-cleaning-border)",
           pressing: "var(--status-pressing)",
           "pressing-bg": "var(--status-pressing-bg)",
+          "pressing-border": "var(--status-pressing-border)",
           late: "var(--status-late)",
           "late-bg": "var(--status-late-bg)",
+          "late-border": "var(--status-late-border)",
+          completed: "var(--status-completed)",
+          "completed-bg": "var(--status-completed-bg)",
+          "completed-border": "var(--status-completed-border)",
           success: "var(--status-success)",
           "success-bg": "var(--status-success-bg)",
+          "success-border": "var(--status-success-border)",
         },
         // Thème prestige doré (conservé pour rétrocompatibilité)
         gold: {

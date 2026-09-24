@@ -168,20 +168,20 @@ export const AvailabilityMatrix: React.FC = () => {
     switch (nature) {
       case "location":
         return {
-          bg: "bg-[#EFF6FF] text-[#1D4ED8] border-[#BFDBFE] hover:bg-[#DBEAFE] dark:bg-blue-950/40 dark:text-blue-200 dark:border-blue-700/50",
-          badge: "bg-[#1D4ED8] text-white",
+          bg: "bg-status-reserved-bg text-status-reserved border-status-reserved-border hover:opacity-90",
+          badge: "bg-status-reserved text-white",
           label: "Location",
         };
       case "pressing":
         return {
-          bg: "bg-[#FEF3C7] text-[#B45309] border-[#FDE68A] hover:bg-[#FDE68A]/70 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-700/50",
-          badge: "bg-[#B45309] text-white font-bold",
+          bg: "bg-status-cleaning-bg text-status-cleaning border-status-cleaning-border hover:opacity-90",
+          badge: "bg-status-cleaning text-white font-bold",
           label: "Pressing",
         };
       case "retard":
         return {
-          bg: "bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA] hover:bg-[#FCA5A5]/40 animate-pulse dark:bg-red-950/40 dark:text-red-200 dark:border-red-700/50",
-          badge: "bg-[#B91C1C] text-white font-bold",
+          bg: "bg-status-late-bg text-status-late border-status-late-border hover:opacity-90 animate-pulse",
+          badge: "bg-status-late text-white font-bold",
           label: "Retard",
         };
     }
@@ -422,20 +422,20 @@ export const AvailabilityMatrix: React.FC = () => {
         {/* Légende Interactive & Drag Help */}
         <div className="flex flex-wrap items-center gap-2.5 text-[11px]">
           <span className="text-muted-foreground font-medium">Légende :</span>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE] dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700/50">
-            <span className="w-2 h-2 rounded-full bg-[#1D4ED8]" />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-status-reserved-bg text-status-reserved border border-status-reserved-border">
+            <span className="w-2 h-2 rounded-full bg-status-reserved" />
             <span className="font-semibold">Location (Glissable)</span>
           </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A] dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700/50">
-            <span className="w-2 h-2 rounded-full bg-[#B45309]" />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-status-cleaning-bg text-status-cleaning border border-status-cleaning-border">
+            <span className="w-2 h-2 rounded-full bg-status-cleaning" />
             <span className="font-semibold">Pressing</span>
           </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#FEE2E2] text-[#B91C1C] border border-[#FECACA] dark:bg-red-950/40 dark:text-red-300 dark:border-red-700/50">
-            <span className="w-2 h-2 rounded-full bg-[#B91C1C] animate-ping" />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-status-late-bg text-status-late border border-status-late-border">
+            <span className="w-2 h-2 rounded-full bg-status-late animate-ping" />
             <span className="font-semibold">Retard</span>
           </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#ECFDF5] text-[#15803D] border border-[#A7F3D0] dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700/50">
-            <span className="w-2 h-2 rounded-full bg-[#15803D]" />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-status-completed-bg text-status-completed border border-status-completed-border">
+            <span className="w-2 h-2 rounded-full bg-status-completed" />
             <span className="font-semibold">Disponible</span>
           </div>
         </div>
@@ -620,7 +620,7 @@ export const AvailabilityMatrix: React.FC = () => {
                             onDragOver={(e) => handleDragOver(e, row, d.iso)}
                             onDragLeave={handleDragLeave}
                             onDrop={(e) => handleDrop(e, row, d.iso)}
-                            className={`p-0 border-r border-border/30 text-center transition-colors hover:bg-emerald-500/10 ${
+                            className={`p-0 border-r border-border/30 text-center transition-colors hover:bg-status-completed-bg/60 ${
                               isDragTarget
                                 ? "bg-primary/25 ring-2 ring-primary ring-inset"
                                 : d.isWeekend
@@ -633,7 +633,7 @@ export const AvailabilityMatrix: React.FC = () => {
                               {isDragTarget ? (
                                 <Move className="w-3.5 h-3.5 text-primary animate-bounce" />
                               ) : (
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/20 opacity-0 hover:opacity-100 transition-opacity" />
+                                <span className="w-1.5 h-1.5 rounded-full bg-status-completed/25 opacity-0 hover:opacity-100 transition-opacity" />
                               )}
                             </div>
                           </td>

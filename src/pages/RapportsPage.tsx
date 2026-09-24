@@ -206,7 +206,7 @@ export const RapportsPage: React.FC = () => {
         <div className="p-5 rounded-xl bg-card border border-border flex flex-col justify-between hover:border-border/80 transition-colors shadow-xs">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="p-2 rounded-lg bg-[#ECFDF5] text-[#15803D] border border-[#A7F3D0] dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700/50">
+              <span className="p-2 rounded-lg bg-status-completed-bg text-status-completed border border-status-completed-border">
                 <DollarSign className="w-4 h-4" />
               </span>
               <span className="text-[10px] font-mono uppercase bg-muted px-2 py-0.5 rounded text-muted-foreground border border-border">
@@ -248,7 +248,7 @@ export const RapportsPage: React.FC = () => {
                 <span className="text-muted-foreground">Taux de Retard :</span>
                 <span
                   className={`font-semibold ${
-                    overview && overview.financier.taux_retard_pourcentage > 0 ? "text-[#B45309] dark:text-amber-400" : "text-[#15803D] dark:text-emerald-400"
+                    overview && overview.financier.taux_retard_pourcentage > 0 ? "text-status-late" : "text-status-completed"
                   }`}
                   data-testid="taux-retard"
                 >
@@ -291,7 +291,7 @@ export const RapportsPage: React.FC = () => {
         <div className="p-5 rounded-xl bg-card border border-border flex flex-col justify-between hover:border-border/80 transition-colors shadow-xs">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="p-2 rounded-lg bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE] dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700/50">
+              <span className="p-2 rounded-lg bg-status-reserved-bg text-status-reserved border border-status-reserved-border">
                 <CreditCard className="w-4 h-4" />
               </span>
               <span className="text-[10px] font-mono uppercase bg-muted px-2 py-0.5 rounded text-muted-foreground border border-border">
@@ -355,7 +355,7 @@ export const RapportsPage: React.FC = () => {
         <div className="p-5 rounded-xl bg-card border border-border flex flex-col justify-between hover:border-border/80 transition-colors shadow-xs">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="p-2 rounded-lg bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A] dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700/50">
+              <span className="p-2 rounded-lg bg-status-cleaning-bg text-status-cleaning border border-status-cleaning-border">
                 <Shirt className="w-4 h-4" />
               </span>
               <span className="text-[10px] font-mono uppercase bg-muted px-2 py-0.5 rounded text-muted-foreground border border-border">

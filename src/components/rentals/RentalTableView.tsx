@@ -98,37 +98,37 @@ export const RentalTableView: React.FC = () => {
       case "en_cours":
         return {
           label: "En cours",
-          className: "bg-[#ECFDF5] text-[#15803D] border-[#A7F3D0] dark:bg-emerald-950/40 dark:text-emerald-300",
+          className: "bg-status-in-progress-bg text-status-in-progress border-status-in-progress-border",
           icon: Clock,
         };
       case "reserve":
         return {
           label: "Réservé",
-          className: "bg-[#EFF6FF] text-[#1D4ED8] border-[#BFDBFE] dark:bg-blue-950/40 dark:text-blue-300",
+          className: "bg-status-reserved-bg text-status-reserved border-status-reserved-border",
           icon: Calendar,
         };
       case "en_retard":
         return {
           label: "En retard",
-          className: "bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA] dark:bg-red-950/40 dark:text-red-300 font-extrabold",
+          className: "bg-status-late-bg text-status-late border-status-late-border font-extrabold",
           icon: AlertTriangle,
         };
       case "retourne":
         return {
           label: "Restitué conforme",
-          className: "bg-muted text-muted-foreground border-border",
+          className: "bg-status-completed-bg text-status-completed border-status-completed-border",
           icon: CheckCircle2,
         };
       case "litige":
         return {
           label: "Litige dégradation",
-          className: "bg-[#FEF3C7] text-[#B45309] border-[#FDE68A] dark:bg-amber-950/40 dark:text-amber-300 font-bold",
+          className: "bg-status-cleaning-bg text-status-cleaning border-status-cleaning-border font-bold",
           icon: AlertTriangle,
         };
       default:
         return {
           label: status,
-          className: "bg-secondary text-muted-foreground",
+          className: "bg-secondary text-muted-foreground border-border",
           icon: Clock,
         };
     }
@@ -272,7 +272,7 @@ export const RentalTableView: React.FC = () => {
                     <td className="py-3 px-4 font-bold text-foreground font-mono">
                       {formatCents(contract.total_amount_cents)}
                       {contract.discount_cents > 0 && (
-                        <div className="text-[10px] text-[#15803D] dark:text-emerald-400 font-normal">
+                        <div className="text-[10px] text-status-completed font-normal">
                           Remise incluse
                         </div>
                       )}
@@ -291,7 +291,7 @@ export const RentalTableView: React.FC = () => {
                             Reste dû : {formatCents(contract.remaining_amount_cents)}
                           </span>
                         ) : (
-                          <span className="text-[#15803D] dark:text-emerald-400 font-semibold font-sans">
+                          <span className="text-status-completed font-semibold font-sans">
                             Règlement soldé
                           </span>
                         )}
@@ -328,7 +328,7 @@ export const RentalTableView: React.FC = () => {
                               }
                               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer ${
                                 isDepositMissing
-                                  ? "bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A] hover:bg-[#FDE68A]"
+                                  ? "bg-status-cleaning-bg text-status-cleaning border border-status-cleaning-border hover:bg-status-cleaning-bg/80"
                                   : "bg-primary/10 text-primary border border-primary/30 hover:bg-primary hover:text-primary-foreground"
                               } ${isValidating ? "opacity-50 cursor-wait" : ""}`}
                             >
@@ -351,7 +351,7 @@ export const RentalTableView: React.FC = () => {
                               }
                               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer ${
                                 contract.customer_phone
-                                  ? "bg-[#ECFDF5] text-[#15803D] border border-[#A7F3D0] hover:bg-[#15803D] hover:text-white"
+                                  ? "bg-status-completed-bg text-status-completed border border-status-completed-border hover:bg-status-completed hover:text-white"
                                   : "opacity-40 cursor-not-allowed bg-secondary text-muted-foreground border border-border"
                               }`}
                             >
@@ -367,7 +367,7 @@ export const RentalTableView: React.FC = () => {
                           type="button"
                           onClick={() => setReturnModalOpen(true, contract)}
                           title="Contrôler l'état et enregistrer le retour"
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-secondary hover:bg-muted text-xs font-semibold text-amber-500 border border-border"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-secondary hover:bg-muted text-xs font-semibold text-status-cleaning border border-border"
                         >
                           <RotateCcw className="w-3 h-3" />
                           <span>Retour</span>
@@ -379,7 +379,7 @@ export const RentalTableView: React.FC = () => {
                           type="button"
                           onClick={() => setPaymentModalContract(contract)}
                           title="Encaisser le solde du contrat"
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-600 hover:text-white text-xs font-semibold border border-emerald-500/30 transition-all shadow-xs"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-status-completed-bg text-status-completed hover:bg-status-completed hover:text-white text-xs font-semibold border border-status-completed-border transition-all shadow-xs"
                         >
                           <CreditCard className="w-3 h-3" />
                           <span>Régler</span>

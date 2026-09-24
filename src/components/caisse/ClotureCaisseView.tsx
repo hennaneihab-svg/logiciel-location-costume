@@ -115,8 +115,8 @@ export const ClotureCaisseView: React.FC = () => {
           <div
             className={`p-3 rounded-xl flex items-center justify-center ${
               isClosed
-                ? "bg-[#FEE2E2] text-[#B91C1C] dark:bg-red-950/40 dark:text-red-300"
-                : "bg-[#ECFDF5] text-[#15803D] dark:bg-emerald-950/40 dark:text-emerald-300"
+                ? "bg-status-late-bg text-status-late"
+                : "bg-status-completed-bg text-status-completed"
             }`}
           >
             {isClosed ? <Lock className="w-6 h-6" /> : <Unlock className="w-6 h-6" />}
@@ -129,8 +129,8 @@ export const ClotureCaisseView: React.FC = () => {
               <span
                 className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold uppercase ${
                   isClosed
-                    ? "bg-[#FEE2E2] text-[#B91C1C] border border-[#FECACA] dark:bg-red-950/40 dark:text-red-300 dark:border-red-700/50"
-                    : "bg-[#ECFDF5] text-[#15803D] border border-[#A7F3D0] dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700/50"
+                    ? "bg-status-late-bg text-status-late border border-status-late-border"
+                    : "bg-status-completed-bg text-status-completed border border-status-completed-border"
                 }`}
               >
                 {isClosed ? "Caisse Clôturée & Scellée" : "Caisse Ouverte (En Cours)"}
@@ -201,9 +201,9 @@ export const ClotureCaisseView: React.FC = () => {
         <div className="p-4 rounded-xl bg-card border border-border shadow-xs">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Ventes Directes (Boutique)</span>
-            <Coins className="w-4 h-4 text-[#15803D]" />
+            <Coins className="w-4 h-4 text-status-completed" />
           </div>
-          <div className="text-2xl font-black text-[#15803D] dark:text-emerald-400 mt-2 font-mono">
+          <div className="text-2xl font-black text-status-completed mt-2 font-mono">
             {formatCents(activeData.sales_total_cents)}
           </div>
           <p className="text-[11px] text-muted-foreground mt-1">
@@ -214,9 +214,9 @@ export const ClotureCaisseView: React.FC = () => {
         <div className="p-4 rounded-xl bg-card border border-border shadow-xs">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Locations Encaissées</span>
-            <CreditCard className="w-4 h-4 text-[#1D4ED8]" />
+            <CreditCard className="w-4 h-4 text-status-reserved" />
           </div>
-          <div className="text-2xl font-black text-[#1D4ED8] dark:text-blue-400 mt-2 font-mono">
+          <div className="text-2xl font-black text-status-reserved mt-2 font-mono">
             {formatCents(activeData.rentals_total_cents)}
           </div>
           <p className="text-[11px] text-muted-foreground mt-1">
@@ -227,7 +227,7 @@ export const ClotureCaisseView: React.FC = () => {
         <div className="p-4 rounded-xl bg-card border border-border shadow-xs">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Fonds de Caisse d'Ouverture</span>
-            <Building2 className="w-4 h-4 text-[#B45309]" />
+            <Building2 className="w-4 h-4 text-status-cleaning" />
           </div>
           <div className="text-2xl font-black text-foreground mt-2 font-mono">
             {formatCents(activeData.initial_cash_float_cents)}
@@ -254,7 +254,7 @@ export const ClotureCaisseView: React.FC = () => {
           <div className="grid grid-cols-2 gap-3">
             {/* Espèces */}
             <div className="p-3.5 rounded-xl bg-secondary/40 border border-border/70 flex items-center gap-3">
-              <div className="p-2.5 rounded-lg bg-emerald-500/10 text-emerald-500">
+              <div className="p-2.5 rounded-lg bg-status-completed-bg text-status-completed">
                 <Banknote className="w-5 h-5" />
               </div>
               <div className="flex-1 min-w-0">
@@ -270,7 +270,7 @@ export const ClotureCaisseView: React.FC = () => {
 
             {/* Carte Bancaire */}
             <div className="p-3.5 rounded-xl bg-secondary/40 border border-border/70 flex items-center gap-3">
-              <div className="p-2.5 rounded-lg bg-blue-500/10 text-blue-500">
+              <div className="p-2.5 rounded-lg bg-status-reserved-bg text-status-reserved">
                 <CreditCard className="w-5 h-5" />
               </div>
               <div className="flex-1 min-w-0">
@@ -286,7 +286,7 @@ export const ClotureCaisseView: React.FC = () => {
 
             {/* Chèques */}
             <div className="p-3.5 rounded-xl bg-secondary/40 border border-border/70 flex items-center gap-3">
-              <div className="p-2.5 rounded-lg bg-purple-500/10 text-purple-500">
+              <div className="p-2.5 rounded-lg bg-primary-subtle text-primary">
                 <FileCheck2 className="w-5 h-5" />
               </div>
               <div className="flex-1 min-w-0">
@@ -302,7 +302,7 @@ export const ClotureCaisseView: React.FC = () => {
 
             {/* Virements */}
             <div className="p-3.5 rounded-xl bg-secondary/40 border border-border/70 flex items-center gap-3">
-              <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-500">
+              <div className="p-2.5 rounded-lg bg-status-cleaning-bg text-status-cleaning">
                 <FileText className="w-5 h-5" />
               </div>
               <div className="flex-1 min-w-0">
@@ -322,7 +322,7 @@ export const ClotureCaisseView: React.FC = () => {
         <div className="lg:col-span-5 bg-card border border-border rounded-2xl p-5 space-y-4 flex flex-col justify-between">
           <div>
             <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
-              <Coins className="w-4 h-4 text-emerald-500" />
+              <Coins className="w-4 h-4 text-status-completed" />
               <span>Contrôle & Écart de Caisse</span>
             </h4>
             <p className="text-[11px] text-muted-foreground mt-0.5">
@@ -339,7 +339,7 @@ export const ClotureCaisseView: React.FC = () => {
             </div>
             <div className="flex justify-between p-2 rounded-lg bg-secondary/30">
               <span className="text-muted-foreground">Espèces encaissées ce jour :</span>
-              <span className="font-bold font-mono text-emerald-600">
+              <span className="font-bold font-mono text-status-completed">
                 + {formatCents(activeData.breakdown.especes.total_cents)}
               </span>
             </div>
@@ -385,15 +385,15 @@ export const ClotureCaisseView: React.FC = () => {
               <div
                 className={`p-3 rounded-xl border flex items-center justify-between ${
                   isExact
-                    ? "bg-[#ECFDF5] border-[#A7F3D0] text-[#15803D] dark:bg-emerald-950/40 dark:text-emerald-400"
-                    : "bg-[#FEF3C7] border-[#FDE68A] text-[#B45309] dark:bg-amber-950/40 dark:text-amber-400"
+                    ? "bg-status-completed-bg border-status-completed-border text-status-completed"
+                    : "bg-status-cleaning-bg border-status-cleaning-border text-status-cleaning"
                 }`}
               >
                 <div className="flex items-center gap-2">
                   {isExact ? (
-                    <CheckCircle2 className="w-5 h-5 text-[#15803D] shrink-0" />
+                    <CheckCircle2 className="w-5 h-5 text-status-completed shrink-0" />
                   ) : (
-                    <AlertTriangle className="w-5 h-5 text-[#B45309] shrink-0" />
+                    <AlertTriangle className="w-5 h-5 text-status-cleaning shrink-0" />
                   )}
                   <div>
                     <span className="text-xs font-bold block">
@@ -463,10 +463,10 @@ export const ClotureCaisseView: React.FC = () => {
                       <span
                         className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-semibold border ${
                           tx.type === "vente_directe"
-                            ? "bg-[#ECFDF5] text-[#15803D] border-[#A7F3D0] dark:bg-emerald-950/40 dark:text-emerald-300"
+                            ? "bg-status-completed-bg text-status-completed border-status-completed-border"
                             : tx.type === "location_solde"
-                            ? "bg-[#EFF6FF] text-[#1D4ED8] border-[#BFDBFE] dark:bg-blue-950/40 dark:text-blue-300"
-                            : "bg-[#FEF3C7] text-[#B45309] border-[#FDE68A] dark:bg-amber-950/40 dark:text-amber-300"
+                            ? "bg-status-reserved-bg text-status-reserved border-status-reserved-border"
+                            : "bg-status-cleaning-bg text-status-cleaning border-status-cleaning-border"
                         }`}
                       >
                         {tx.type === "vente_directe"

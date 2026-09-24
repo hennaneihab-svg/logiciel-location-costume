@@ -424,7 +424,7 @@ export const CreateRentalModal: React.FC = () => {
                         Bloqué
                       </span>
                     ) : c.rentals.length > 5 ? (
-                      <span className="text-[10px] text-amber-500 font-bold">
+                      <span className="text-[10px] text-status-cleaning font-bold">
                         Fidèle
                       </span>
                     ) : null}
@@ -694,7 +694,7 @@ export const CreateRentalModal: React.FC = () => {
                               Conflit date
                             </span>
                           ) : (
-                            <span className="text-[10px] font-semibold text-emerald-500">
+                            <span className="text-[10px] font-semibold text-status-completed">
                               Disponible
                             </span>
                           )}
@@ -906,10 +906,10 @@ export const CreateRentalModal: React.FC = () => {
                 </div>
 
                 <div className="flex justify-between pt-2">
-                  <span className="text-[#15803D] dark:text-emerald-400 font-semibold">
+                  <span className="text-status-completed font-semibold">
                     Réglé immédiatement :
                   </span>
-                  <span className="font-extrabold text-[#15803D] dark:text-emerald-400 font-mono">
+                  <span className="font-extrabold text-status-completed font-mono">
                     {formatCents(financialSummary.paidCents)}
                   </span>
                 </div>
@@ -922,7 +922,7 @@ export const CreateRentalModal: React.FC = () => {
                     className={`font-black font-mono ${
                       financialSummary.remainingCents > 0
                         ? "text-destructive"
-                        : "text-[#15803D] dark:text-emerald-400"
+                        : "text-status-completed"
                     }`}
                   >
                     {formatCents(financialSummary.remainingCents)}

@@ -41,15 +41,34 @@
     --ring: 177 52% 24.5%;              /* #1E5F5C */
     --radius: 0.5rem;
 
-    /* Codes couleur métier (nuances adoucies sur fond lin) */
+    /* Codes couleur métier (nuances adoucies sur fond lin validées en H0) */
+    --status-reserved: #1D4ED8;
+    --status-reserved-bg: #EFF6FF;
+    --status-reserved-border: #BFDBFE;
+    --status-in-progress: #1D4ED8;
+    --status-in-progress-bg: #EFF6FF;
+    --status-in-progress-border: #BFDBFE;
     --status-rental: #1D4ED8;
     --status-rental-bg: #EFF6FF;
+    --status-rental-border: #BFDBFE;
+
+    --status-cleaning: #B45309;
+    --status-cleaning-bg: #FEF3C7;
+    --status-cleaning-border: #FDE68A;
     --status-pressing: #B45309;
     --status-pressing-bg: #FEF3C7;
+    --status-pressing-border: #FDE68A;
+
     --status-late: #B91C1C;
     --status-late-bg: #FEE2E2;
+    --status-late-border: #FECACA;
+
+    --status-completed: #15803D;
+    --status-completed-bg: #ECFDF5;
+    --status-completed-border: #A7F3D0;
     --status-success: #15803D;
     --status-success-bg: #ECFDF5;
+    --status-success-border: #A7F3D0;
   }
 
   .dark {
@@ -77,6 +96,35 @@
     --border: 60 8% 18%;
     --input: 60 8% 18%;
     --ring: 177 45% 42%;
+
+    /* Statuts métier en dark mode */
+    --status-reserved: #60A5FA;
+    --status-reserved-bg: rgba(30, 58, 138, 0.35);
+    --status-reserved-border: rgba(96, 165, 250, 0.4);
+    --status-in-progress: #60A5FA;
+    --status-in-progress-bg: rgba(30, 58, 138, 0.35);
+    --status-in-progress-border: rgba(96, 165, 250, 0.4);
+    --status-rental: #60A5FA;
+    --status-rental-bg: rgba(30, 58, 138, 0.35);
+    --status-rental-border: rgba(96, 165, 250, 0.4);
+
+    --status-cleaning: #FBBF24;
+    --status-cleaning-bg: rgba(120, 53, 15, 0.35);
+    --status-cleaning-border: rgba(251, 191, 36, 0.4);
+    --status-pressing: #FBBF24;
+    --status-pressing-bg: rgba(120, 53, 15, 0.35);
+    --status-pressing-border: rgba(251, 191, 36, 0.4);
+
+    --status-late: #F87171;
+    --status-late-bg: rgba(127, 29, 29, 0.35);
+    --status-late-border: rgba(248, 113, 113, 0.4);
+
+    --status-completed: #34D399;
+    --status-completed-bg: rgba(6, 78, 59, 0.35);
+    --status-completed-border: rgba(52, 211, 153, 0.4);
+    --status-success: #34D399;
+    --status-success-bg: rgba(6, 78, 59, 0.35);
+    --status-success-border: rgba(52, 211, 153, 0.4);
   }
 }
 
