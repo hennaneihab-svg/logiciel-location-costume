@@ -206,7 +206,7 @@ export const RapportsPage: React.FC = () => {
         <div className="p-5 rounded-xl bg-card border border-border flex flex-col justify-between hover:border-border/80 transition-colors shadow-xs">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500">
+              <span className="p-2 rounded-lg bg-[#ECFDF5] text-[#15803D] border border-[#A7F3D0] dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700/50">
                 <DollarSign className="w-4 h-4" />
               </span>
               <span className="text-[10px] font-mono uppercase bg-muted px-2 py-0.5 rounded text-muted-foreground border border-border">
@@ -222,19 +222,19 @@ export const RapportsPage: React.FC = () => {
             <div className="space-y-2.5 p-3 rounded-lg bg-muted/30 border border-border text-xs">
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Chiffre d'Affaires Global :</span>
-                <span className="font-bold text-foreground text-sm" data-testid="ca-total">
+                <span className="font-bold text-foreground text-sm font-mono" data-testid="ca-total">
                   {overview ? formatDA(overview.financier.ca_total_centimes) : "..."}
                 </span>
               </div>
               <div className="flex justify-between items-center text-muted-foreground text-[11px]">
                 <span>• Revenus Locations :</span>
-                <span className="font-semibold text-foreground" data-testid="ca-locations">
+                <span className="font-semibold text-foreground font-mono" data-testid="ca-locations">
                   {overview ? formatDA(overview.financier.ca_locations_centimes) : "..."}
                 </span>
               </div>
               <div className="flex justify-between items-center text-muted-foreground text-[11px]">
                 <span>• Ventes Directes :</span>
-                <span className="font-semibold text-foreground" data-testid="ca-ventes">
+                <span className="font-semibold text-foreground font-mono" data-testid="ca-ventes">
                   {overview ? formatDA(overview.financier.ca_ventes_centimes) : "..."}
                 </span>
               </div>
@@ -248,7 +248,7 @@ export const RapportsPage: React.FC = () => {
                 <span className="text-muted-foreground">Taux de Retard :</span>
                 <span
                   className={`font-semibold ${
-                    overview && overview.financier.taux_retard_pourcentage > 0 ? "text-amber-500" : "text-emerald-500"
+                    overview && overview.financier.taux_retard_pourcentage > 0 ? "text-[#B45309] dark:text-amber-400" : "text-[#15803D] dark:text-emerald-400"
                   }`}
                   data-testid="taux-retard"
                 >
@@ -291,7 +291,7 @@ export const RapportsPage: React.FC = () => {
         <div className="p-5 rounded-xl bg-card border border-border flex flex-col justify-between hover:border-border/80 transition-colors shadow-xs">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="p-2 rounded-lg bg-blue-500/10 text-blue-500">
+              <span className="p-2 rounded-lg bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE] dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700/50">
                 <CreditCard className="w-4 h-4" />
               </span>
               <span className="text-[10px] font-mono uppercase bg-muted px-2 py-0.5 rounded text-muted-foreground border border-border">
@@ -307,7 +307,7 @@ export const RapportsPage: React.FC = () => {
             <div className="space-y-2 p-3 rounded-lg bg-muted/30 border border-border text-xs">
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Total Encaissé :</span>
-                <span className="font-bold text-foreground text-sm" data-testid="total-reglements">
+                <span className="font-bold text-foreground text-sm font-mono" data-testid="total-reglements">
                   {overview ? formatDA(overview.caisse.total_reglements_centimes) : "..."}
                 </span>
               </div>
@@ -316,7 +316,7 @@ export const RapportsPage: React.FC = () => {
                   overview.caisse.reglements_par_mode.map((m) => (
                     <div key={m.moyen} className="flex justify-between items-center text-[11px] text-muted-foreground">
                       <span>• {m.label} :</span>
-                      <span className="font-medium text-foreground">
+                      <span className="font-medium text-foreground font-mono">
                         {formatDA(m.montant_centimes)} ({m.nb_transactions})
                       </span>
                     </div>
@@ -335,7 +335,7 @@ export const RapportsPage: React.FC = () => {
             <button
               type="button"
               onClick={() => handleOpenPreview("caisse")}
-              className="flex-1 py-1.5 px-3 rounded-md bg-muted/60 border border-border text-xs font-medium text-foreground hover:bg-muted flex items-center justify-center gap-1.5 transition-colors"
+              className="flex-1 py-1.5 px-3 rounded-lg bg-muted/60 border border-border text-xs font-medium text-foreground hover:bg-muted active:bg-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
             >
               <FileText className="w-3.5 h-3.5 text-muted-foreground" />
               Aperçu
@@ -343,7 +343,7 @@ export const RapportsPage: React.FC = () => {
             <button
               type="button"
               onClick={handleExportCaisseCsv}
-              className="py-1.5 px-4 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 flex items-center gap-1.5 transition-colors"
+              className="py-1.5 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary-hover active:bg-primary-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               Exporter CSV
@@ -355,7 +355,7 @@ export const RapportsPage: React.FC = () => {
         <div className="p-5 rounded-xl bg-card border border-border flex flex-col justify-between hover:border-border/80 transition-colors shadow-xs">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="p-2 rounded-lg bg-amber-500/10 text-amber-500">
+              <span className="p-2 rounded-lg bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A] dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700/50">
                 <Shirt className="w-4 h-4" />
               </span>
               <span className="text-[10px] font-mono uppercase bg-muted px-2 py-0.5 rounded text-muted-foreground border border-border">
@@ -371,7 +371,7 @@ export const RapportsPage: React.FC = () => {
             <div className="space-y-2 p-3 rounded-lg bg-muted/30 border border-border text-xs">
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Valeur Totale du Parc :</span>
-                <span className="font-bold text-foreground text-sm" data-testid="valeur-stock">
+                <span className="font-bold text-foreground text-sm font-mono" data-testid="valeur-stock">
                   {overview ? formatDA(overview.stock.valeur_totale_stock_centimes) : "..."}
                 </span>
               </div>

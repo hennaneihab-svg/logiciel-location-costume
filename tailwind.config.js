@@ -23,6 +23,11 @@ export default {
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          hover: "hsl(var(--primary-hover))",
+          active: "hsl(var(--primary-active))",
+          subtle: "hsl(var(--primary-subtle))",
+          light: "hsl(var(--primary-light))",
+          muted: "hsl(var(--primary-muted))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
@@ -39,6 +44,8 @@ export default {
         accent: {
           DEFAULT: "hsl(var(--accent))",
           foreground: "hsl(var(--accent-foreground))",
+          subtle: "hsl(var(--primary-subtle))",
+          light: "hsl(var(--primary-light))",
         },
         popover: {
           DEFAULT: "hsl(var(--popover))",
@@ -48,7 +55,42 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        // Thème prestige / boutique de cérémonie
+        // Marque DressRent & Palette Neutre Dérivée
+        dressrent: {
+          carbon: "#12130F",
+          linen: "#F7F5F0",
+          petrole: {
+            subtle: "#E8F2F1",
+            light: "#B9DDD9",
+            muted: "#337C78",
+            DEFAULT: "#1E5F5C",
+            hover: "#164E4B",
+            active: "#0F3B39",
+          },
+          neutral: {
+            50: "#F7F5F0",
+            100: "#EFECE4",
+            200: "#E2DDD1",
+            300: "#C8C1B0",
+            400: "#9C9482",
+            500: "#736B5B",
+            600: "#524C40",
+            800: "#2B2B24",
+            900: "#12130F",
+          },
+        },
+        // Codes couleur métier adoucis sur fond lin
+        status: {
+          rental: "var(--status-rental)",
+          "rental-bg": "var(--status-rental-bg)",
+          pressing: "var(--status-pressing)",
+          "pressing-bg": "var(--status-pressing-bg)",
+          late: "var(--status-late)",
+          "late-bg": "var(--status-late-bg)",
+          success: "var(--status-success)",
+          "success-bg": "var(--status-success-bg)",
+        },
+        // Thème prestige doré (conservé pour rétrocompatibilité)
         gold: {
           50: "#fdfbf7",
           100: "#fbf7ee",

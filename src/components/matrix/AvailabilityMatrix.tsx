@@ -163,25 +163,25 @@ export const AvailabilityMatrix: React.FC = () => {
     return filteredRows.slice(startIndex, startIndex + pageSize);
   }, [filteredRows, currentPage, pageSize]);
 
-  // Rendu visuel d'un créneau selon sa nature
+  // Rendu visuel d'un créneau selon sa nature (Charte DressRent & codes métier adoucis)
   const getSlotStyle = (nature: SlotNature) => {
     switch (nature) {
       case "location":
         return {
-          bg: "bg-blue-600/20 text-blue-300 border-blue-500/40 hover:bg-blue-600/30",
-          badge: "bg-blue-500 text-white",
+          bg: "bg-[#EFF6FF] text-[#1D4ED8] border-[#BFDBFE] hover:bg-[#DBEAFE] dark:bg-blue-950/40 dark:text-blue-200 dark:border-blue-700/50",
+          badge: "bg-[#1D4ED8] text-white",
           label: "Location",
         };
       case "pressing":
         return {
-          bg: "bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30",
-          badge: "bg-amber-500 text-black font-bold",
+          bg: "bg-[#FEF3C7] text-[#B45309] border-[#FDE68A] hover:bg-[#FDE68A]/70 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-700/50",
+          badge: "bg-[#B45309] text-white font-bold",
           label: "Pressing",
         };
       case "retard":
         return {
-          bg: "bg-red-600/30 text-red-200 border-red-500/60 hover:bg-red-600/40 animate-pulse",
-          badge: "bg-red-600 text-white font-bold",
+          bg: "bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA] hover:bg-[#FCA5A5]/40 animate-pulse dark:bg-red-950/40 dark:text-red-200 dark:border-red-700/50",
+          badge: "bg-[#B91C1C] text-white font-bold",
           label: "Retard",
         };
     }
@@ -422,20 +422,20 @@ export const AvailabilityMatrix: React.FC = () => {
         {/* Légende Interactive & Drag Help */}
         <div className="flex flex-wrap items-center gap-2.5 text-[11px]">
           <span className="text-muted-foreground font-medium">Légende :</span>
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/30">
-            <span className="w-2 h-2 rounded-full bg-blue-500" />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE] dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700/50">
+            <span className="w-2 h-2 rounded-full bg-[#1D4ED8]" />
             <span className="font-semibold">Location (Glissable)</span>
           </div>
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/30">
-            <span className="w-2 h-2 rounded-full bg-amber-500" />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A] dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700/50">
+            <span className="w-2 h-2 rounded-full bg-[#B45309]" />
             <span className="font-semibold">Pressing</span>
           </div>
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-red-500/10 text-red-400 border border-red-500/30">
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#FEE2E2] text-[#B91C1C] border border-[#FECACA] dark:bg-red-950/40 dark:text-red-300 dark:border-red-700/50">
+            <span className="w-2 h-2 rounded-full bg-[#B91C1C] animate-ping" />
             <span className="font-semibold">Retard</span>
           </div>
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-500 border border-emerald-500/30">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#ECFDF5] text-[#15803D] border border-[#A7F3D0] dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700/50">
+            <span className="w-2 h-2 rounded-full bg-[#15803D]" />
             <span className="font-semibold">Disponible</span>
           </div>
         </div>

@@ -4,48 +4,79 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 3.9%;
-    --card: 0 0% 98.5%;
-    --card-foreground: 0 0% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 3.9%;
-    --primary: 38 65% 45%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
-    --accent: 0 0% 96.1%;
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 84.2% 60.2%;
+    /* Base de marque DressRent */
+    --background: 43 37% 95.5%;          /* #F7F5F0 Blanc cassé lin */
+    --foreground: 60 12% 6.7%;           /* #12130F Noir carbone */
+    --card: 43 25% 92%;                 /* #EFECE4 Surface de carte douce */
+    --card-foreground: 60 12% 6.7%;
+    --popover: 43 37% 96.5%;
+    --popover-foreground: 60 12% 6.7%;
+    
+    /* Actions & Accents - Pétrole profond #1E5F5C */
+    --primary: 177 52% 24.5%;           /* #1E5F5C */
+    --primary-foreground: 0 0% 100%;    /* #FFFFFF */
+    --primary-hover: 177 56% 20%;       /* #164E4B */
+    --primary-active: 177 59% 15%;      /* #0F3B39 */
+    --primary-subtle: 177 30% 93%;      /* #E8F2F1 */
+    --primary-light: 177 32% 80%;       /* #B9DDD9 */
+    --primary-muted: 177 41% 35%;       /* #337C78 */
+
+    /* Secondaire & Neutres chauds */
+    --secondary: 43 22% 89%;            /* #E7E3D8 */
+    --secondary-foreground: 60 12% 6.7%;
+    --muted: 43 20% 90%;
+    --muted-foreground: 41 12% 43%;     /* #524C40 Lisible AA */
+
+    /* Badges & Sélections subtiles */
+    --accent: 177 30% 93%;              /* #E8F2F1 */
+    --accent-foreground: 177 52% 24.5%; /* #1E5F5C */
+    
+    /* Alertes & Destructif feutré */
+    --destructive: 0 72% 51%;           /* #B91C1C */
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 38 65% 45%;
+    
+    /* Bordures & Contrôles */
+    --border: 41 22% 85%;               /* #E2DDD1 */
+    --input: 41 22% 85%;
+    --ring: 177 52% 24.5%;              /* #1E5F5C */
     --radius: 0.5rem;
+
+    /* Codes couleur métier (nuances adoucies sur fond lin) */
+    --status-rental: #1D4ED8;
+    --status-rental-bg: #EFF6FF;
+    --status-pressing: #B45309;
+    --status-pressing-bg: #FEF3C7;
+    --status-late: #B91C1C;
+    --status-late-bg: #FEE2E2;
+    --status-success: #15803D;
+    --status-success-bg: #ECFDF5;
   }
 
   .dark {
-    --background: 240 4% 10%;
-    --foreground: 0 0% 98%;
-    --card: 240 4% 8%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 4% 8%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 38 75% 55%;
-    --primary-foreground: 0 0% 10%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 38 75% 55%;
+    --background: 60 12% 6.7%;          /* #12130F Noir carbone */
+    --foreground: 43 37% 95.5%;          /* #F7F5F0 Blanc cassé */
+    --card: 60 10% 9%;                  /* Surface légèrement surélevée */
+    --card-foreground: 43 37% 95.5%;
+    --popover: 60 10% 9%;
+    --popover-foreground: 43 37% 95.5%;
+    --primary: 177 45% 42%;             /* Pétrole éclairci pour le dark mode */
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 177 48% 48%;
+    --primary-active: 177 50% 36%;
+    --primary-subtle: 177 35% 15%;
+    --primary-light: 177 35% 25%;
+    --primary-muted: 177 40% 55%;
+    --secondary: 60 8% 14%;
+    --secondary-foreground: 43 37% 95.5%;
+    --muted: 60 8% 14%;
+    --muted-foreground: 41 12% 65%;
+    --accent: 177 35% 15%;
+    --accent-foreground: 177 45% 42%;
+    --destructive: 0 65% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 60 8% 18%;
+    --input: 60 8% 18%;
+    --ring: 177 45% 42%;
   }
 }
 

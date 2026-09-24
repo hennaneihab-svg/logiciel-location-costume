@@ -879,7 +879,7 @@ export const CreateRentalModal: React.FC = () => {
                 </div>
 
                 {financialSummary.discountCents > 0 && (
-                  <div className="flex justify-between pt-2 text-red-400">
+                  <div className="flex justify-between pt-2 text-destructive font-medium">
                     <span>Remise accordée :</span>
                     <span className="font-bold">
                       - {formatCents(financialSummary.discountCents)}
@@ -891,7 +891,7 @@ export const CreateRentalModal: React.FC = () => {
                   <span className="font-bold text-foreground">
                     Total Facturé TTC :
                   </span>
-                  <span className="font-black text-primary">
+                  <span className="font-black text-primary text-base font-mono">
                     {formatCents(financialSummary.totalFactureCents)}
                   </span>
                 </div>
@@ -900,16 +900,16 @@ export const CreateRentalModal: React.FC = () => {
                   <span className="font-medium text-muted-foreground">
                     Caution exigée ({depositMethod}) :
                   </span>
-                  <span className="font-bold text-foreground">
+                  <span className="font-bold text-foreground font-mono">
                     {formatCents(financialSummary.defaultDepositCents)}
                   </span>
                 </div>
 
                 <div className="flex justify-between pt-2">
-                  <span className="text-emerald-500 font-semibold">
+                  <span className="text-[#15803D] dark:text-emerald-400 font-semibold">
                     Réglé immédiatement :
                   </span>
-                  <span className="font-extrabold text-emerald-500">
+                  <span className="font-extrabold text-[#15803D] dark:text-emerald-400 font-mono">
                     {formatCents(financialSummary.paidCents)}
                   </span>
                 </div>
@@ -919,10 +919,10 @@ export const CreateRentalModal: React.FC = () => {
                     Reste dû à la restitution :
                   </span>
                   <span
-                    className={`font-black ${
+                    className={`font-black font-mono ${
                       financialSummary.remainingCents > 0
-                        ? "text-red-400"
-                        : "text-emerald-500"
+                        ? "text-destructive"
+                        : "text-[#15803D] dark:text-emerald-400"
                     }`}
                   >
                     {formatCents(financialSummary.remainingCents)}
@@ -934,7 +934,7 @@ export const CreateRentalModal: React.FC = () => {
               <div className="pt-2">
                 <button
                   type="submit"
-                  className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 shadow-md flex items-center justify-center gap-2 transition-all"
+                  className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary-hover active:bg-primary-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
                   <CheckCircle2 className="w-4 h-4" />
                   <span>

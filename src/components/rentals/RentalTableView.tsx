@@ -98,31 +98,31 @@ export const RentalTableView: React.FC = () => {
       case "en_cours":
         return {
           label: "En cours",
-          className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+          className: "bg-[#ECFDF5] text-[#15803D] border-[#A7F3D0] dark:bg-emerald-950/40 dark:text-emerald-300",
           icon: Clock,
         };
       case "reserve":
         return {
           label: "Réservé",
-          className: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+          className: "bg-[#EFF6FF] text-[#1D4ED8] border-[#BFDBFE] dark:bg-blue-950/40 dark:text-blue-300",
           icon: Calendar,
         };
       case "en_retard":
         return {
           label: "En retard",
-          className: "bg-red-500/15 text-red-400 border-red-500/30 font-extrabold",
+          className: "bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA] dark:bg-red-950/40 dark:text-red-300 font-extrabold",
           icon: AlertTriangle,
         };
       case "retourne":
         return {
           label: "Restitué conforme",
-          className: "bg-slate-500/10 text-slate-400 border-slate-500/20",
+          className: "bg-muted text-muted-foreground border-border",
           icon: CheckCircle2,
         };
       case "litige":
         return {
           label: "Litige dégradation",
-          className: "bg-purple-500/10 text-purple-400 border-purple-500/20 font-bold",
+          className: "bg-[#FEF3C7] text-[#B45309] border-[#FDE68A] dark:bg-amber-950/40 dark:text-amber-300 font-bold",
           icon: AlertTriangle,
         };
       default:
@@ -269,29 +269,29 @@ export const RentalTableView: React.FC = () => {
                       </div>
                     </td>
 
-                    <td className="py-3 px-4 font-bold text-foreground">
+                    <td className="py-3 px-4 font-bold text-foreground font-mono">
                       {formatCents(contract.total_amount_cents)}
                       {contract.discount_cents > 0 && (
-                        <div className="text-[10px] text-emerald-500 font-normal">
+                        <div className="text-[10px] text-[#15803D] dark:text-emerald-400 font-normal">
                           Remise incluse
                         </div>
                       )}
                     </td>
 
                     <td className="py-3 px-4">
-                      <div className="font-medium text-foreground">
+                      <div className="font-medium text-foreground font-mono">
                         {formatCents(contract.deposit_amount_cents)}{" "}
-                        <span className="text-[10px] text-muted-foreground">
+                        <span className="text-[10px] text-muted-foreground font-sans">
                           ({contract.deposit_method})
                         </span>
                       </div>
-                      <div className="text-[10px]">
+                      <div className="text-[10px] font-mono">
                         {contract.remaining_amount_cents > 0 ? (
-                          <span className="text-red-400 font-semibold">
+                          <span className="text-destructive font-semibold">
                             Reste dû : {formatCents(contract.remaining_amount_cents)}
                           </span>
                         ) : (
-                          <span className="text-emerald-500 font-semibold">
+                          <span className="text-[#15803D] dark:text-emerald-400 font-semibold font-sans">
                             Règlement soldé
                           </span>
                         )}
@@ -326,10 +326,10 @@ export const RentalTableView: React.FC = () => {
                                   ? "Caution non enregistrée — encaissez ou enregistrez la caution avant de valider le retrait"
                                   : "Valider la remise physique des pièces au client"
                               }
-                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs ${
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer ${
                                 isDepositMissing
-                                  ? "bg-amber-500/10 text-amber-500 border border-amber-500/30 hover:bg-amber-500/20"
-                                  : "bg-blue-600/10 text-blue-500 border border-blue-500/30 hover:bg-blue-600 hover:text-white"
+                                  ? "bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A] hover:bg-[#FDE68A]"
+                                  : "bg-primary/10 text-primary border border-primary/30 hover:bg-primary hover:text-primary-foreground"
                               } ${isValidating ? "opacity-50 cursor-wait" : ""}`}
                             >
                               {isValidating ? (
@@ -349,9 +349,9 @@ export const RentalTableView: React.FC = () => {
                                   ? "Envoyer la confirmation de réservation par WhatsApp"
                                   : "Aucun numéro de téléphone disponible"
                               }
-                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs ${
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer ${
                                 contract.customer_phone
-                                  ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 hover:bg-emerald-500 hover:text-white"
+                                  ? "bg-[#ECFDF5] text-[#15803D] border border-[#A7F3D0] hover:bg-[#15803D] hover:text-white"
                                   : "opacity-40 cursor-not-allowed bg-secondary text-muted-foreground border border-border"
                               }`}
                             >
