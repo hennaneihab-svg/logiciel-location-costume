@@ -57,13 +57,19 @@ describe("Module D & C — Flux de Création de Location de Bout en Bout", () =>
     expect(newContract).toBeDefined();
     expect(newContract.contract_number).toMatch(/^LOC-2026-\d{4}$/);
     expect(newContract.customer_name).toContain(client.first_name);
-    expect(newContract.status).toBe("en_cours");
+    // Règle MOD-4 : Créé systématiquement au statut 'reserve', même si pickup_date = today
+    expect(newContract.status).toBe("reserve");
     expect(newContract.discount_cents).toBe(1000);
     expect(newContract.deposit_amount_cents).toBe(20000);
     expect(newContract.paid_amount_cents).toBe(5000);
     expect(newContract.remaining_amount_cents).toBe(
       newContract.total_amount_cents - 5000
     );
+
+    // Validation du retrait physique via validatePickup
+    const pickedUp = await useRentalStore.getState().validatePickup(newContract.id);
+    expect(pickedUp.status).toBe("en_cours");
+    expect(pickedUp.pickup_date_actual).toBeDefined();
 
     // Vérifie qu il a bien été ajouté à la liste
     const afterCount = useRentalStore.getState().contracts.length;

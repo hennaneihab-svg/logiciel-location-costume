@@ -508,10 +508,10 @@ async fn test_mandatory_user_and_today_local() {
 
     let pool = db::init_db(&test_dir).await.expect("Failed to init db");
 
-    // 1. Test de la fonction pure compute_contract_status_for_date
+    // 1. Test de la fonction pure compute_contract_status_for_date (Règle MOD-4: systématiquement 'reserve')
     let today = today_local();
-    assert_eq!(compute_contract_status_for_date(&today, &today), "en_cours");
-    assert_eq!(compute_contract_status_for_date("2020-01-01", &today), "en_cours");
+    assert_eq!(compute_contract_status_for_date(&today, &today), "reserve");
+    assert_eq!(compute_contract_status_for_date("2020-01-01", &today), "reserve");
     assert_eq!(compute_contract_status_for_date("2099-01-01", &today), "reserve");
 
     // 2. Refus de création sans utilisateur (B0-6)
@@ -683,9 +683,18 @@ async fn test_pack_lines_stock_lifecycle_and_return() {
     };
 
     let contract = execute_create_rental(&pool, dto).await.expect("Création contrat ok");
-    assert_eq!(contract.status, "en_cours");
+    assert_eq!(contract.status, "reserve", "Le contrat naît systématiquement 'reserve', même si pickup_date = today");
 
-    // Vérifier que var-004 est en 'en_location'
+    // Valider le retrait physique pour passer en 'en_cours'
+    let pickup_dto = ValidateRentalPickupDto {
+        contract_id: contract.id.clone(),
+        utilisateur_id: Some("usr-001".to_string()),
+        notes: Some("Retrait pack immédiat".to_string()),
+    };
+    let contract_picked_up = execute_validate_rental_pickup(&pool, pickup_dto).await.expect("Validation retrait ok");
+    assert_eq!(contract_picked_up.status, "en_cours");
+
+    // Vérifier que var-004 est passée en 'en_location'
     let var_before: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-004'")
         .fetch_one(&pool)
         .await
@@ -937,5 +946,107 @@ async fn test_validate_rental_pickup_success_atomic_transaction_and_variant_upda
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[tokio::test]
+async fn test_contract_created_today_stays_reserved_until_validate_rental_pickup() {
+    let test_dir = std::env::temp_dir().join(format!("test_pickup_today_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    let today = today_local();
+    let dto = CreateRentalContractDto {
+        customer_id: "cli-001".to_string(),
+        utilisateur_id: Some("usr-001".to_string()),
+        pickup_date: today.clone(), // Date de retrait = aujourd'hui !
+        return_date_scheduled: today.clone(),
+        event_date: None,
+        selected_variant_ids: vec!["var-002".to_string()],
+        quantity_items: None,
+        pack_lines: None,
+        discount_cents: None,
+        deposit_method: "carte_bancaire".to_string(),
+        deposit_amount_cents: Some(30000),
+        paid_amount_cents: Some(15000),
+        payment_method: "carte_bancaire".to_string(),
+        notes: Some("Contrat créé le jour même".to_string()),
+    };
+
+    // 1. Création du contrat avec date de retrait le jour même
+    let created = execute_create_rental(&pool, dto).await.expect("Création contrat réussie");
+
+    // MOD-4 : Le contrat DOIT être au statut 'reserve', et JAMAIS 'en_cours'
+    assert_eq!(created.status, "reserve", "Tout contrat doit naître 'reserve' même si pickup_date = today");
+    assert_eq!(created.pickup_date_actual, None, "date_retrait_effective doit être NULL à la création");
+
+    // Vérifier en base SQLite
+    let loc_row: (String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT statut, date_retrait_effective, utilisateur_retrait_id FROM locations WHERE id = ?"
+    )
+    .bind(&created.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(loc_row.0, "reserve");
+    assert_eq!(loc_row.1, None);
+    assert_eq!(loc_row.2, None);
+
+    // La variante var-002 doit être 'reserve' et NON 'en_location'
+    let var_row: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-002'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(var_row.0, "reserve", "La pièce physique reste 'reserve' en boutique");
+
+    // Aucun mouvement de stock 'depart_location' ne doit exister pour cette variante
+    let mvt_count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM mouvements_stock WHERE variante_id = 'var-002' AND type_mouvement = 'depart_location'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(mvt_count.0, 0, "Aucun mouvement de départ avant validation physique du retrait");
+
+    // 2. Appel explicite de validate_rental_pickup
+    let pickup_dto = ValidateRentalPickupDto {
+        contract_id: created.id.clone(),
+        utilisateur_id: Some("usr-001".to_string()),
+        notes: Some("Remise physique en main propre effectuée".to_string()),
+    };
+    let picked_up = execute_validate_rental_pickup(&pool, pickup_dto).await.expect("Validation retrait réussie");
+
+    // 3. Après validation : le contrat passe à 'en_cours' et la pièce quitte le stock
+    assert_eq!(picked_up.status, "en_cours");
+    assert_eq!(picked_up.pickup_date_actual, Some(today.clone()));
+
+    let loc_after: (String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT statut, date_retrait_effective, utilisateur_retrait_id FROM locations WHERE id = ?"
+    )
+    .bind(&created.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(loc_after.0, "en_cours");
+    assert_eq!(loc_after.1, Some(today));
+    assert_eq!(loc_after.2, Some("usr-001".to_string()));
+
+    let var_after: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-002'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(var_after.0, "en_location", "La pièce passe 'en_location' uniquement après validate_rental_pickup");
+
+    let mvt_after: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM mouvements_stock WHERE variante_id = 'var-002' AND type_mouvement = 'depart_location'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(mvt_after.0, 1, "Un mouvement depart_location a été tracé atomiquement");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
 
 

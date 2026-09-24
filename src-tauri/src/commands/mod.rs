@@ -254,12 +254,11 @@ pub fn today_local() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
-pub fn compute_contract_status_for_date(pickup_date: &str, today: &str) -> &'static str {
-    if pickup_date <= today {
-        "en_cours"
-    } else {
-        "reserve"
-    }
+pub fn compute_contract_status_for_date(_pickup_date: &str, _today: &str) -> &'static str {
+    // Règle LOT MOD-4 : Tout contrat naît systématiquement au statut 'reserve',
+    // quelle que soit sa date de retrait (y compris le jour même). Le passage
+    // au statut 'en_cours' exige impérativement la confirmation physique via validate_rental_pickup.
+    "reserve"
 }
 
 pub struct ImmediateTx {

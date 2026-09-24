@@ -581,9 +581,10 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
     const paidCents = input.paid_amount_cents || 0;
     const remainingCents = Math.max(0, totalFactureCents - paidCents);
 
-    const todayStr = new Date().toISOString().split("T")[0];
-    const isTodayOrPast = input.pickup_date <= todayStr;
-    const contractStatus: RentalContractStatus = isTodayOrPast ? "en_cours" : "reserve";
+    // Règle LOT MOD-4 : Tout contrat naît systématiquement au statut "reserve",
+    // quelle que soit sa date de retrait (y compris le jour même). Le passage
+    // à "en_cours" requiert la confirmation physique de retrait via validatePickup.
+    const contractStatus: RentalContractStatus = "reserve";
 
     const nextNumber = `LOC-2026-${String(get().contracts.length + 10).padStart(4, "0")}`;
 
@@ -619,7 +620,7 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
       updated_at: new Date().toISOString(),
     };
 
-    const newVariantStatus = isTodayOrPast ? "en_location" : "reserve";
+    const newVariantStatus = "reserve";
     for (const item of items) {
       useStockStore
         .getState()

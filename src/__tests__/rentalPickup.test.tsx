@@ -3,6 +3,8 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { RentalTableView } from "@/components/rentals/RentalTableView";
 import { useRentalStore } from "@/store/rentalStore";
 import { useAuthStore } from "@/store/authStore";
+import { useStockStore } from "@/store/stockStore";
+import { useClientStore } from "@/store/clientStore";
 import type { RentalContract } from "@/types/rental";
 import { toast } from "sonner";
 
@@ -146,4 +148,57 @@ describe("G3/G4 — Validation physique du retrait (validate_rental_pickup)", ()
       expect.stringContaining("Retrait validé — contrat LOC-2026-PICKUP-02 passé en cours")
     );
   });
+
+  it("Règle MOD-4 : un contrat créé avec pickup_date = aujourd'hui naît systématiquement 'reserve', et ne passe à 'en_cours' qu'après validatePickup", async () => {
+    const client = useClientStore.getState().clients[0];
+    const article = useStockStore.getState().articles[0];
+    const variant = article.variants[0];
+
+    const today = new Date().toISOString().slice(0, 10);
+    const in3Days = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+
+    const contract = await useRentalStore.getState().createRentalContract({
+      customer_id: client.id,
+      pickup_date: today,
+      return_date_scheduled: in3Days,
+      selected_variant_ids: [variant.id],
+      discount_cents: 0,
+      deposit_amount_cents: 20000,
+      deposit_method: "especes",
+      paid_amount_cents: 5000,
+      payment_method: "especes",
+    });
+
+    // 1. Statut initial obligatoirement 'reserve', même si pickup_date == today
+    expect(contract.status).toBe("reserve");
+    expect(contract.pickup_date_actual).toBeUndefined();
+
+    // La variante doit être en statut 'reserve' (et non 'en_location')
+    const stockVariant = useStockStore.getState().articles
+      .flatMap((a) => a.variants)
+      .find((v) => v.id === variant.id);
+    expect(stockVariant?.status).toBe("reserve");
+
+    // 2. Simuler l'encaissement de la caution pour permettre le retrait
+    useRentalStore.setState((s) => ({
+      contracts: s.contracts.map((c) =>
+        c.id === contract.id ? { ...c, deposit_status: "encaissee" } : c
+      ),
+    }));
+
+    // 3. Appel explicite de validatePickup
+    await useRentalStore.getState().validatePickup(contract.id);
+
+    // 4. Vérification de la transition en 'en_cours'
+    const updatedContract = useRentalStore.getState().contracts.find((c) => c.id === contract.id);
+    expect(updatedContract?.status).toBe("en_cours");
+    expect(updatedContract?.pickup_date_actual).toBeDefined();
+
+    // La variante doit maintenant être 'en_location'
+    const updatedVariant = useStockStore.getState().articles
+      .flatMap((a) => a.variants)
+      .find((v) => v.id === variant.id);
+    expect(updatedVariant?.status).toBe("en_location");
+  });
 });
+
