@@ -961,7 +961,7 @@ async fn test_contract_created_today_stays_reserved_until_validate_rental_pickup
         pickup_date: today.clone(), // Date de retrait = aujourd'hui !
         return_date_scheduled: today.clone(),
         event_date: None,
-        selected_variant_ids: vec!["var-002".to_string()],
+        selected_variant_ids: vec!["var-003".to_string()],
         quantity_items: None,
         pack_lines: None,
         discount_cents: None,
@@ -991,8 +991,8 @@ async fn test_contract_created_today_stays_reserved_until_validate_rental_pickup
     assert_eq!(loc_row.1, None);
     assert_eq!(loc_row.2, None);
 
-    // La variante var-002 doit être 'reserve' et NON 'en_location'
-    let var_row: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-002'")
+    // La variante var-003 doit être 'reserve' et NON 'en_location'
+    let var_row: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-003'")
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -1000,7 +1000,7 @@ async fn test_contract_created_today_stays_reserved_until_validate_rental_pickup
 
     // Aucun mouvement de stock 'depart_location' ne doit exister pour cette variante
     let mvt_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM mouvements_stock WHERE variante_id = 'var-002' AND type_mouvement = 'depart_location'"
+        "SELECT COUNT(*) FROM mouvements_stock WHERE variante_id = 'var-003' AND type_mouvement = 'depart_location'"
     )
     .fetch_one(&pool)
     .await
@@ -1030,14 +1030,14 @@ async fn test_contract_created_today_stays_reserved_until_validate_rental_pickup
     assert_eq!(loc_after.1, Some(today));
     assert_eq!(loc_after.2, Some("usr-001".to_string()));
 
-    let var_after: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-002'")
+    let var_after: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-003'")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(var_after.0, "en_location", "La pièce passe 'en_location' uniquement après validate_rental_pickup");
 
     let mvt_after: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM mouvements_stock WHERE variante_id = 'var-002' AND type_mouvement = 'depart_location'"
+        "SELECT COUNT(*) FROM mouvements_stock WHERE variante_id = 'var-003' AND type_mouvement = 'depart_location'"
     )
     .fetch_one(&pool)
     .await
