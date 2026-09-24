@@ -724,28 +724,38 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
             .map_err(AppError::DatabaseError)?;
 
         let migration_res: Result<(), AppError> = async {
-            for stmt in MIGRATION_0014.split(';') {
-                let trimmed = stmt.trim();
-                if !trimmed.is_empty() {
-                    sqlx::query(trimmed)
-                        .execute(&mut *conn)
-                        .await
-                        .map_err(AppError::DatabaseError)?;
-                }
+            let col_check: Option<(i64,)> = sqlx::query_as(
+                "SELECT 1 FROM pragma_table_info('locations') WHERE name = 'utilisateur_retrait_id'"
+            )
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(AppError::DatabaseError)?;
+
+            if col_check.is_none() {
+                sqlx::query("ALTER TABLE locations ADD COLUMN utilisateur_retrait_id TEXT REFERENCES utilisateurs(id) ON DELETE SET NULL;")
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(AppError::DatabaseError)?;
             }
+
+            sqlx::query("CREATE INDEX IF NOT EXISTS idx_locations_date_retrait_effective ON locations(date_retrait_effective);")
+                .execute(&mut *conn)
+                .await
+                .map_err(AppError::DatabaseError)?;
+
             Ok(())
         }.await;
 
         match migration_res {
             Ok(()) => {
-                sqlx::query("COMMIT;")
+                let now = chrono::Utc::now().to_rfc3339();
+                sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (14, '0014_rental_pickup', ?)")
+                    .bind(now)
                     .execute(&mut *conn)
                     .await
                     .map_err(AppError::DatabaseError)?;
 
-                let now = chrono::Utc::now().to_rfc3339();
-                sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (14, '0014_rental_pickup', ?)")
-                    .bind(now)
+                sqlx::query("COMMIT;")
                     .execute(&mut *conn)
                     .await
                     .map_err(AppError::DatabaseError)?;

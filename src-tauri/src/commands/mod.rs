@@ -1163,15 +1163,17 @@ pub async fn execute_register_return(pool: &sqlx::SqlitePool, dto: RegisterRetur
 
     let contract_id = dto.contract_id.clone();
     match async {
-        let loc = sqlx::query_as::<_, Location>("SELECT * FROM locations WHERE id = ?")
-            .bind(&dto.contract_id)
-            .fetch_optional(&mut *tx.conn)
-            .await
-            .map_err(map_sqlite_err)?
-            .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", dto.contract_id)))?;
+        let (loc_num, loc_statut, loc_caution): (String, String, i64) = sqlx::query_as(
+            "SELECT numero_location, statut, montant_caution_centimes FROM locations WHERE id = ?"
+        )
+        .bind(&dto.contract_id)
+        .fetch_optional(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?
+        .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", dto.contract_id)))?;
 
-        if loc.statut == "retourne" || loc.statut == "annule" {
-            return Err(AppError::Validation(format!("Le contrat {} est déjà clôturé ou annulé.", loc.numero_location)));
+        if loc_statut == "retourne" || loc_statut == "annule" {
+            return Err(AppError::Validation(format!("Le contrat {} est déjà clôturé ou annulé.", loc_num)));
         }
 
         let now = chrono::Utc::now().to_rfc3339();
@@ -1275,7 +1277,7 @@ pub async fn execute_register_return(pool: &sqlx::SqlitePool, dto: RegisterRetur
         }
 
         let deposit_status = if total_damage_fee_cents > 0 {
-            if total_damage_fee_cents >= loc.montant_caution_centimes {
+            if total_damage_fee_cents >= loc_caution {
                 "conservee_totalement"
             } else {
                 "conservee_partiellement"
@@ -1328,33 +1330,35 @@ pub async fn execute_validate_rental_pickup(
 
     let contract_id = dto.contract_id.clone();
     match async {
-        let loc = sqlx::query_as::<_, Location>("SELECT * FROM locations WHERE id = ?")
-            .bind(&dto.contract_id)
-            .fetch_optional(&mut *tx.conn)
-            .await
-            .map_err(map_sqlite_err)?
-            .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", dto.contract_id)))?;
+        let (loc_num, loc_statut, loc_caution, loc_statut_caution, loc_notes): (String, String, i64, String, Option<String>) = sqlx::query_as(
+            "SELECT numero_location, statut, montant_caution_centimes, statut_caution, notes FROM locations WHERE id = ?"
+        )
+        .bind(&dto.contract_id)
+        .fetch_optional(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?
+        .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", dto.contract_id)))?;
 
         // 1. Contrôle du statut actuel du contrat
-        if loc.statut == "en_cours" {
+        if loc_statut == "en_cours" {
             return Err(AppError::Validation(format!(
                 "Le retrait du contrat {} a déjà été validé (contrat actuellement en cours).",
-                loc.numero_location
+                loc_num
             )));
         }
-        if loc.statut != "reserve" {
+        if loc_statut != "reserve" {
             return Err(AppError::Validation(format!(
                 "Impossible de valider le retrait : le contrat {} est au statut '{}'. Seul un contrat 'réservé' peut faire l'objet d'un retrait.",
-                loc.numero_location, loc.statut
+                loc_num, loc_statut
             )));
         }
 
         // 2. Contrôle de la caution
-        if loc.montant_caution_centimes > 0 && loc.statut_caution == "non_recue" {
+        if loc_caution > 0 && loc_statut_caution == "non_recue" {
             return Err(AppError::Validation(format!(
                 "Retrait refusé : la caution de {} DA n'est pas enregistrée pour le contrat {} (statut : non reçue). Veuillez enregistrer le dépôt de caution avant remise physique des pièces.",
-                loc.montant_caution_centimes / 100,
-                loc.numero_location
+                loc_caution / 100,
+                loc_num
             )));
         }
 
@@ -1381,14 +1385,14 @@ pub async fn execute_validate_rental_pickup(
         let now = chrono::Utc::now().to_rfc3339();
         let today_str = today_local();
 
-        let updated_notes = match (&loc.notes, &dto.notes) {
+        let updated_notes = match (&loc_notes, &dto.notes) {
             (Some(existing), Some(extra)) if !extra.trim().is_empty() => {
                 Some(format!("{}\n[Retrait {}] {}", existing, today_str, extra.trim()))
             }
             (None, Some(extra)) if !extra.trim().is_empty() => {
                 Some(format!("[Retrait {}] {}", today_str, extra.trim()))
             }
-            _ => loc.notes.clone(),
+            _ => loc_notes.clone(),
         };
 
         // 4. Mise à jour de la location vers le statut 'en_cours'
@@ -1466,17 +1470,19 @@ pub async fn execute_cancel_rental(pool: &sqlx::SqlitePool, id: &str) -> Result<
     let mut tx = ImmediateTx::begin(pool).await?;
 
     match async {
-        let loc = sqlx::query_as::<_, Location>("SELECT * FROM locations WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&mut *tx.conn)
-            .await
-            .map_err(map_sqlite_err)?
-            .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", id)))?;
+        let (loc_num, loc_statut): (String, String) = sqlx::query_as(
+            "SELECT numero_location, statut FROM locations WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?
+        .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", id)))?;
 
-        if loc.statut != "reserve" && loc.statut != "brouillon" {
+        if loc_statut != "reserve" && loc_statut != "brouillon" {
             return Err(AppError::Validation(format!(
                 "Impossible d'annuler le contrat {} car son statut est '{}' (seuls 'reserve' ou 'brouillon' peuvent être annulés).",
-                loc.numero_location, loc.statut
+                loc_num, loc_statut
             )));
         }
 

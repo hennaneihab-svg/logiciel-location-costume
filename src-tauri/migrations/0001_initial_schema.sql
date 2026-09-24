@@ -149,7 +149,8 @@ CREATE TABLE IF NOT EXISTS locations (
     notes TEXT,
     chemin_pdf TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    utilisateur_retrait_id TEXT REFERENCES utilisateurs(id) ON DELETE SET NULL
 );
 
 -------------------------------------------------------------------------------

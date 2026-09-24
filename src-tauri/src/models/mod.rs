@@ -141,7 +141,6 @@ pub struct Location {
     pub numero_location: String,
     pub client_id: String,
     pub utilisateur_id: String,
-    pub utilisateur_retrait_id: Option<String>,
     pub statut: String,
     pub date_evenement: Option<String>,
     pub date_retrait_prevue: String,
@@ -162,6 +161,7 @@ pub struct Location {
     pub chemin_pdf: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub utilisateur_retrait_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
