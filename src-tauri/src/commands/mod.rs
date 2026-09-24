@@ -3764,16 +3764,17 @@ pub async fn execute_get_financial_transactions_report(
             l.numero_location,
             v.numero_vente,
             p.type_paiement,
-            c.nom_complet AS client_location_nom,
-            v.client_nom AS client_vente_nom,
+            c_loc.nom_complet AS client_location_nom,
+            c_vte.nom_complet AS client_vente_nom,
             p.moyen_paiement,
             p.montant_centimes,
             p.date_paiement,
             u.nom_complet AS operateur_nom
          FROM paiements p
          LEFT JOIN locations l ON p.location_id = l.id
-         LEFT JOIN clients c ON l.client_id = c.id
+         LEFT JOIN clients c_loc ON l.client_id = c_loc.id
          LEFT JOIN ventes v ON p.vente_id = v.id
+         LEFT JOIN clients c_vte ON v.client_id = c_vte.id
          LEFT JOIN utilisateurs u ON p.utilisateur_id = u.id
          WHERE date(p.date_paiement) >= ? AND date(p.date_paiement) <= ?
          ORDER BY p.date_paiement DESC"

@@ -77,14 +77,12 @@ async fn test_rapports_overview_calculations_and_period_filtering() {
     // 2. Insertion d'une vente directe aujourd'hui : 10 000 DA
     let vente_id = "vte-test-rap-1";
     sqlx::query(
-        "INSERT INTO ventes (id, numero_vente, client_id, client_nom, client_telephone,
-                             utilisateur_id, statut, montant_total_centimes, montant_tva_centimes,
-                             taux_tva, notes, created_at, updated_at)
-         VALUES (?, 'VTE-RAP-001', 'cli-001', 'Jean Dupont', '0600000000',
-                 'usr-001', 'completee', 10000, 0, 0, 'Test Vente', ?, ?)"
+        "INSERT INTO ventes (id, numero_vente, client_id, utilisateur_id, montant_total_centimes,
+                             moyen_paiement, statut, notes, created_at)
+         VALUES (?, 'VTE-RAP-001', 'cli-001', 'usr-001', 10000,
+                 'carte_bancaire', 'completee', 'Test Vente', ?)"
     )
     .bind(vente_id)
-    .bind(format!("{}T12:00:00Z", today))
     .bind(format!("{}T12:00:00Z", today))
     .execute(&pool)
     .await
