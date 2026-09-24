@@ -3717,7 +3717,7 @@ pub async fn execute_get_rapports_overview(
     let cout_pressing_centimes = row_cout_pressing.0;
 
     let row_valeur_stock: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(COALESCE(a.valeur_remplacement_centimes, a.prix_achat_centimes, 0)), 0)
+        "SELECT COALESCE(SUM(COALESCE(a.caution_suggeree_centimes, a.prix_vente_centimes, 0)), 0)
          FROM variantes_stock vs
          JOIN articles a ON vs.article_id = a.id
          WHERE vs.statut != 'au_rebut'"
@@ -3764,8 +3764,8 @@ pub async fn execute_get_financial_transactions_report(
             l.numero_location,
             v.numero_vente,
             p.type_paiement,
-            c_loc.nom_complet AS client_location_nom,
-            c_vte.nom_complet AS client_vente_nom,
+            TRIM(c_loc.prenom || ' ' || c_loc.nom) AS client_location_nom,
+            TRIM(c_vte.prenom || ' ' || c_vte.nom) AS client_vente_nom,
             p.moyen_paiement,
             p.montant_centimes,
             p.date_paiement,
@@ -3806,7 +3806,7 @@ pub async fn execute_get_financial_transactions_report(
 pub async fn execute_get_stock_inventory_report(
     pool: &sqlx::SqlitePool,
 ) -> Result<Vec<StockInventoryRowDto>, AppError> {
-    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, Option<String>, String, Option<i64>, Option<i64>, i64)>(
+    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, Option<String>, String, i64, i64)>(
         "SELECT 
             vs.id AS variant_id,
             a.id AS article_id,
@@ -3815,8 +3815,7 @@ pub async fn execute_get_stock_inventory_report(
             c.nom AS categorie,
             vs.taille,
             vs.statut,
-            a.valeur_remplacement_centimes,
-            a.prix_achat_centimes,
+            COALESCE(a.caution_suggeree_centimes, a.prix_vente_centimes, 0) AS valeur_remplacement,
             COALESCE((SELECT SUM(pe.cout_centimes) FROM pressing_envois pe WHERE pe.variante_id = vs.id AND pe.statut != 'annule'), 0) AS cout_pressing
          FROM variantes_stock vs
          JOIN articles a ON vs.article_id = a.id
@@ -3829,7 +3828,6 @@ pub async fn execute_get_stock_inventory_report(
     .map_err(AppError::DatabaseError)?;
 
     let result = rows.into_iter().map(|r| {
-        let valeur = r.7.or(r.8).unwrap_or(0);
         StockInventoryRowDto {
             variant_id: r.0,
             article_id: r.1,
@@ -3838,8 +3836,8 @@ pub async fn execute_get_stock_inventory_report(
             categorie: r.4.unwrap_or_else(|| "Général".to_string()),
             taille: r.5.unwrap_or_else(|| "Unique".to_string()),
             statut: r.6,
-            valeur_remplacement_centimes: valeur,
-            cout_pressing_total_centimes: r.9,
+            valeur_remplacement_centimes: r.7,
+            cout_pressing_total_centimes: r.8,
         }
     }).collect();
 

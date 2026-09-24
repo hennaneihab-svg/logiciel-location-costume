@@ -113,7 +113,20 @@ async fn test_rapports_overview_calculations_and_period_filtering() {
     .await
     .expect("Failed to insert payment 2");
 
-    // 4. Envoi pressing aujourd'hui avec coût 4 500 DA
+    // 4. Prestataire et envoi pressing aujourd'hui avec coût 4 500 DA
+    sqlx::query(
+        "INSERT INTO pressing_prestataires (id, nom, contact_nom, telephone, adresse,
+                                            tarif_defaut_centimes, delai_defaut_jours, actif,
+                                            created_at, updated_at)
+         VALUES ('pres-001', 'Pressing Rapide', 'Samir', '0555000111', 'Alger',
+                 4500, 3, 1, ?, ?)"
+    )
+    .bind(format!("{}T08:00:00Z", today))
+    .bind(format!("{}T08:00:00Z", today))
+    .execute(&pool)
+    .await
+    .expect("Failed to insert pressing prestataire");
+
     sqlx::query(
         "INSERT INTO pressing_envois (id, numero_envoi, variante_id, prestataire_id,
                                       type_traitement, cout_centimes, statut_paiement_prestataire,
