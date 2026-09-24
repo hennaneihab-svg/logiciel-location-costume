@@ -25,7 +25,7 @@ async fn test_rapports_overview_calculations_and_period_filtering() {
                                 frais_retard_centimes, frais_degradation_centimes, remise_centimes,
                                 montant_caution_centimes, statut_caution, created_at, updated_at)
          VALUES (?, 'LOC-RAP-001', 'cli-001', 'usr-001', 'en_cours',
-                 ?, ?, 25000, 0, 25000, 0, 0, 0, 0, 10000, 'recue', ?, ?)"
+                 ?, ?, 25000, 0, 25000, 0, 0, 0, 0, 10000, 'encaissee', ?, ?)"
     )
     .bind(loc_id_1)
     .bind(&today)
@@ -43,7 +43,7 @@ async fn test_rapports_overview_calculations_and_period_filtering() {
                                 frais_retard_centimes, frais_degradation_centimes, remise_centimes,
                                 montant_caution_centimes, statut_caution, created_at, updated_at)
          VALUES (?, 'LOC-RAP-002', 'cli-002', 'usr-001', 'en_retard',
-                 ?, ?, 15000, 0, 15000, 0, 0, 0, 0, 8000, 'recue', ?, ?)"
+                 ?, ?, 15000, 0, 15000, 0, 0, 0, 0, 8000, 'encaissee', ?, ?)"
     )
     .bind(loc_id_2)
     .bind(&today)
