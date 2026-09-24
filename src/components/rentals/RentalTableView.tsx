@@ -9,6 +9,8 @@ import {
   Calendar,
   MessageCircle,
   CreditCard,
+  PackageCheck,
+  Loader2,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { useRentalStore } from "@/store/rentalStore";
@@ -21,6 +23,7 @@ import { RentalPaymentModal } from "@/components/rentals/RentalPaymentModal";
 
 export const RentalTableView: React.FC = () => {
   const [paymentModalContract, setPaymentModalContract] = useState<RentalContract | null>(null);
+  const [validatingPickupId, setValidatingPickupId] = useState<string | null>(null);
   const {
     contracts,
     activeFilter,
@@ -29,6 +32,7 @@ export const RentalTableView: React.FC = () => {
     setSearchQuery,
     setPdfPreviewModalOpen,
     setReturnModalOpen,
+    validatePickup,
   } = useRentalStore();
 
   const logAuditEvent = useSettingsStore((s) => s.logAuditEvent);
@@ -58,6 +62,34 @@ export const RentalTableView: React.FC = () => {
       toast.success(`Message de confirmation de réservation ouvert sur WhatsApp pour ${contract.customer_name} !`);
     } else {
       toast.error(res.error || "Impossible d'ouvrir WhatsApp");
+    }
+  };
+
+  const handleConfirmPickup = async (contract: RentalContract) => {
+    const isDepositMissing =
+      contract.deposit_amount_cents > 0 && contract.deposit_status === "non_recue";
+
+    if (isDepositMissing) {
+      toast.error(
+        "Caution non enregistrée — encaissez ou enregistrez la caution avant de valider le retrait"
+      );
+      return;
+    }
+
+    setValidatingPickupId(contract.id);
+    try {
+      await validatePickup(contract.id);
+      logAuditEvent(
+        "UPDATE_STATUS",
+        "locations",
+        contract.id,
+        `Retrait physique validé pour le contrat ${contract.contract_number} (${contract.customer_name})`
+      );
+      toast.success(`Retrait validé — contrat ${contract.contract_number} passé en cours`);
+    } catch (err: any) {
+      toast.error(err?.message || "Erreur lors de la validation du retrait");
+    } finally {
+      setValidatingPickupId(null);
     }
   };
 
@@ -276,26 +308,59 @@ export const RentalTableView: React.FC = () => {
                     </td>
 
                     <td className="py-3 px-4 text-right space-x-1.5">
-                      {contract.status === "reserve" && (
-                        <button
-                          type="button"
-                          onClick={() => handleWhatsAppReservation(contract)}
-                          disabled={!contract.customer_phone}
-                          title={
-                            contract.customer_phone
-                              ? "Envoyer la confirmation de réservation par WhatsApp"
-                              : "Aucun numéro de téléphone disponible"
-                          }
-                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs ${
-                            contract.customer_phone
-                              ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 hover:bg-emerald-500 hover:text-white"
-                              : "opacity-40 cursor-not-allowed bg-secondary text-muted-foreground border border-border"
-                          }`}
-                        >
-                          <MessageCircle className="w-3 h-3" />
-                          <span>Confirmer WhatsApp</span>
-                        </button>
-                      )}
+                      {contract.status === "reserve" && (() => {
+                        const isDepositMissing =
+                          contract.deposit_amount_cents > 0 &&
+                          contract.deposit_status === "non_recue";
+                        const isValidating = validatingPickupId === contract.id;
+
+                        return (
+                          <>
+                            <button
+                              type="button"
+                              data-testid={`confirm-pickup-${contract.id}`}
+                              onClick={() => handleConfirmPickup(contract)}
+                              disabled={isValidating}
+                              title={
+                                isDepositMissing
+                                  ? "Caution non enregistrée — encaissez ou enregistrez la caution avant de valider le retrait"
+                                  : "Valider la remise physique des pièces au client"
+                              }
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs ${
+                                isDepositMissing
+                                  ? "bg-amber-500/10 text-amber-500 border border-amber-500/30 hover:bg-amber-500/20"
+                                  : "bg-blue-600/10 text-blue-500 border border-blue-500/30 hover:bg-blue-600 hover:text-white"
+                              } ${isValidating ? "opacity-50 cursor-wait" : ""}`}
+                            >
+                              {isValidating ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <PackageCheck className="w-3 h-3" />
+                              )}
+                              <span>Confirmer retrait</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleWhatsAppReservation(contract)}
+                              disabled={!contract.customer_phone}
+                              title={
+                                contract.customer_phone
+                                  ? "Envoyer la confirmation de réservation par WhatsApp"
+                                  : "Aucun numéro de téléphone disponible"
+                              }
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs ${
+                                contract.customer_phone
+                                  ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 hover:bg-emerald-500 hover:text-white"
+                                  : "opacity-40 cursor-not-allowed bg-secondary text-muted-foreground border border-border"
+                              }`}
+                            >
+                              <MessageCircle className="w-3 h-3" />
+                              <span>WhatsApp</span>
+                            </button>
+                          </>
+                        );
+                      })()}
 
                       {canReturn && (
                         <button

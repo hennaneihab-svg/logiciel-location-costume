@@ -52,6 +52,7 @@ export interface RentalContract {
   status: RentalContractStatus;
   event_date?: string; // YYYY-MM-DD
   pickup_date: string; // YYYY-MM-DD
+  pickup_date_actual?: string; // YYYY-MM-DD
   return_date_scheduled: string; // YYYY-MM-DD
   return_date_actual?: string; // YYYY-MM-DD
 
@@ -97,3 +98,10 @@ export interface NewRentalFormInput {
   payment_method: "carte_bancaire" | "especes" | "cheque" | "virement";
   notes?: string;
 }
+
+export interface ValidateRentalPickupInput {
+  contract_id: string;
+  utilisateur_id?: string;
+  notes?: string;
+}
+

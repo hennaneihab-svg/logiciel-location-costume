@@ -720,4 +720,222 @@ async fn test_pack_lines_stock_lifecycle_and_return() {
     let _ = fs::remove_dir_all(&test_dir);
 }
 
+#[tokio::test]
+async fn test_validate_rental_pickup_refused_if_no_deposit() {
+    let test_dir = std::env::temp_dir().join(format!("test_pickup_no_dep_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    let loc_id = "loc-test-pickup-nodep";
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Insertion d'un contrat 'reserve' avec caution requise (25 000 DA) mais statut 'non_recue'
+    sqlx::query(
+        "INSERT INTO locations (id, numero_location, client_id, utilisateur_id, statut,
+                                date_retrait_prevue, date_retour_prevue, montant_total_ht_centimes,
+                                tva_taux, montant_total_ttc_centimes, frais_nettoyage_centimes,
+                                frais_retard_centimes, frais_degradation_centimes, remise_centimes,
+                                montant_caution_centimes, statut_caution, created_at, updated_at)
+         VALUES (?, 'LOC-PICK-001', 'cli-001', 'usr-001', 'reserve',
+                 '2099-06-01', '2099-06-05', 20000, 0, 20000, 0, 0, 0, 0, 25000, 'non_recue', ?, ?)"
+    )
+    .bind(loc_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Insert test location");
+
+    // Ligne de location associée
+    sqlx::query(
+        "INSERT INTO lignes_location (id, location_id, variante_id, type_ligne, prix_unitaire_centimes, caution_centimes, etat_depart, est_rendu)
+         VALUES ('lig-pick-001', ?, 'var-001', 'location', 20000, 25000, 'excellent', 0)"
+    )
+    .bind(loc_id)
+    .execute(&pool)
+    .await
+    .expect("Insert test line");
+
+    let pickup_dto = ValidateRentalPickupDto {
+        contract_id: loc_id.to_string(),
+        utilisateur_id: Some("usr-001".to_string()),
+        notes: Some("Tentative de retrait sans caution".to_string()),
+    };
+
+    let result = execute_validate_rental_pickup(&pool, pickup_dto).await;
+    assert!(result.is_err(), "Le retrait doit être catégoriquement refusé sans caution enregistrée");
+    let err_msg = format!("{:?}", result.err().unwrap());
+    assert!(
+        err_msg.contains("caution") && err_msg.contains("non reçue"),
+        "Le message d'erreur doit expliciter le refus lié à la caution non reçue : {}",
+        err_msg
+    );
+
+    // Vérifier que le statut n'a pas bougé
+    let statut_db: (String,) = sqlx::query_as("SELECT statut FROM locations WHERE id = ?")
+        .bind(loc_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(statut_db.0, "reserve", "Le contrat doit rester 'reserve' après le refus");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_validate_rental_pickup_refused_if_already_picked_up() {
+    let test_dir = std::env::temp_dir().join(format!("test_pickup_already_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    let loc_id = "loc-test-pickup-dbl";
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Contrat 'reserve' avec caution enregistrée ('encaissee')
+    sqlx::query(
+        "INSERT INTO locations (id, numero_location, client_id, utilisateur_id, statut,
+                                date_retrait_prevue, date_retour_prevue, montant_total_ht_centimes,
+                                tva_taux, montant_total_ttc_centimes, frais_nettoyage_centimes,
+                                frais_retard_centimes, frais_degradation_centimes, remise_centimes,
+                                montant_caution_centimes, statut_caution, created_at, updated_at)
+         VALUES (?, 'LOC-PICK-002', 'cli-001', 'usr-001', 'reserve',
+                 '2099-06-01', '2099-06-05', 20000, 0, 20000, 0, 0, 0, 0, 25000, 'encaissee', ?, ?)"
+    )
+    .bind(loc_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Insert test location");
+
+    sqlx::query(
+        "INSERT INTO lignes_location (id, location_id, variante_id, type_ligne, prix_unitaire_centimes, caution_centimes, etat_depart, est_rendu)
+         VALUES ('lig-pick-002', ?, 'var-001', 'location', 20000, 25000, 'excellent', 0)"
+    )
+    .bind(loc_id)
+    .execute(&pool)
+    .await
+    .expect("Insert test line");
+
+    let pickup_dto = ValidateRentalPickupDto {
+        contract_id: loc_id.to_string(),
+        utilisateur_id: Some("usr-001".to_string()),
+        notes: Some("Premier retrait validé".to_string()),
+    };
+
+    // 1. Premier retrait -> Succès
+    let first_res = execute_validate_rental_pickup(&pool, pickup_dto.clone()).await;
+    assert!(first_res.is_ok(), "Le premier retrait doit être accepté");
+
+    // 2. Deuxième appel -> Refus (pas de double confirmation)
+    let second_res = execute_validate_rental_pickup(&pool, pickup_dto).await;
+    assert!(second_res.is_err(), "Le second retrait doit être refusé car le contrat est déjà 'en_cours'");
+    let err_msg = format!("{:?}", second_res.err().unwrap());
+    assert!(
+        err_msg.contains("déjà été validé"),
+        "Le message d'erreur doit indiquer que le retrait a déjà été validé : {}",
+        err_msg
+    );
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[tokio::test]
+async fn test_validate_rental_pickup_success_atomic_transaction_and_variant_update() {
+    let test_dir = std::env::temp_dir().join(format!("test_pickup_atomic_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    let loc_id = "loc-test-pickup-ok";
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // 1. Création contrat réservé avec caution en chèque retenu
+    sqlx::query(
+        "INSERT INTO locations (id, numero_location, client_id, utilisateur_id, statut,
+                                date_retrait_prevue, date_retour_prevue, montant_total_ht_centimes,
+                                tva_taux, montant_total_ttc_centimes, frais_nettoyage_centimes,
+                                frais_retard_centimes, frais_degradation_centimes, remise_centimes,
+                                montant_caution_centimes, statut_caution, notes_caution, created_at, updated_at)
+         VALUES (?, 'LOC-PICK-003', 'cli-001', 'usr-001', 'reserve',
+                 '2099-07-01', '2099-07-05', 30000, 0, 30000, 0, 0, 0, 0, 45000, 'cheque_retenu', 'Chèque n° 88210', ?, ?)"
+    )
+    .bind(loc_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Insert test location");
+
+    sqlx::query(
+        "INSERT INTO lignes_location (id, location_id, variante_id, type_ligne, prix_unitaire_centimes, caution_centimes, etat_depart, est_rendu)
+         VALUES ('lig-pick-003', ?, 'var-001', 'location', 30000, 45000, 'excellent', 0)"
+    )
+    .bind(loc_id)
+    .execute(&pool)
+    .await
+    .expect("Insert test line");
+
+    // Recalcul initial de la variante -> doit être 'reserve'
+    recompute_variant_status(&mut *pool.acquire().await.unwrap(), "var-001")
+        .await
+        .expect("Recompute status ok");
+    let initial_var_statut: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-001'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(initial_var_statut.0, "reserve", "Avant retrait, la variante est au statut 'reserve'");
+
+    // 2. Validation du retrait
+    let pickup_dto = ValidateRentalPickupDto {
+        contract_id: loc_id.to_string(),
+        utilisateur_id: Some("usr-001".to_string()),
+        notes: Some("Client venu retirer en personne avec pièce d'identité".to_string()),
+    };
+
+    let contract_dto = execute_validate_rental_pickup(&pool, pickup_dto)
+        .await
+        .expect("Validation du retrait réussie");
+
+    // 3. Vérifications :
+    // a) Statut du contrat passé à 'en_cours'
+    assert_eq!(contract_dto.status, "en_cours");
+    assert!(contract_dto.pickup_date_actual.is_some(), "La date de retrait effective doit être renseignée");
+
+    // b) En base SQLite : date_retrait_effective et utilisateur_retrait_id correctement persistés
+    let loc_row: (String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT statut, date_retrait_effective, utilisateur_retrait_id FROM locations WHERE id = ?"
+    )
+    .bind(loc_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(loc_row.0, "en_cours");
+    assert!(loc_row.1.is_some());
+    assert_eq!(loc_row.2, Some("usr-001".to_string()));
+
+    // c) Statut de la variante physique var-001 passée à 'en_location'
+    let after_var_statut: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = 'var-001'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(after_var_statut.0, "en_location", "Après validation physique, la pièce doit passer 'en_location'");
+
+    // d) Traçabilité dans mouvements_stock avec 'depart_location'
+    let mvt_row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM mouvements_stock WHERE variante_id = 'var-001' AND type_mouvement = 'depart_location'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(mvt_row.0 > 0, "Un mouvement 'depart_location' doit être tracé dans mouvements_stock");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
 

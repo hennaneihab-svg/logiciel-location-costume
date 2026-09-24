@@ -407,6 +407,7 @@ pub async fn fetch_rental_dto_by_id(pool: &sqlx::SqlitePool, id: &str) -> Result
     let event_date: Option<String> = row.get::<Option<String>, _>("date_evenement").map(|d| d.split('T').next().unwrap_or(&d).to_string());
     let pickup_date_raw: String = row.get("date_retrait_prevue");
     let pickup_date = pickup_date_raw.split('T').next().unwrap_or(&pickup_date_raw).to_string();
+    let pickup_date_actual: Option<String> = row.get::<Option<String>, _>("date_retrait_effective").map(|d| d.split('T').next().unwrap_or(&d).to_string());
     let return_date_sched_raw: String = row.get("date_retour_prevue");
     let return_date_scheduled = return_date_sched_raw.split('T').next().unwrap_or(&return_date_sched_raw).to_string();
     let return_date_actual: Option<String> = row.get::<Option<String>, _>("date_retour_effective").map(|d| d.split('T').next().unwrap_or(&d).to_string());
@@ -527,6 +528,7 @@ pub async fn fetch_rental_dto_by_id(pool: &sqlx::SqlitePool, id: &str) -> Result
         status,
         event_date,
         pickup_date,
+        pickup_date_actual,
         return_date_scheduled,
         return_date_actual,
         items,
@@ -1316,6 +1318,148 @@ pub async fn execute_register_return(pool: &sqlx::SqlitePool, dto: RegisterRetur
 #[command]
 pub async fn register_return(dto: RegisterReturnDto, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
     execute_register_return(&state.pool, dto).await
+}
+
+pub async fn execute_validate_rental_pickup(
+    pool: &sqlx::SqlitePool,
+    dto: ValidateRentalPickupDto,
+) -> Result<RentalContractDto, AppError> {
+    let mut tx = ImmediateTx::begin(pool).await?;
+
+    let contract_id = dto.contract_id.clone();
+    match async {
+        let loc = sqlx::query_as::<_, Location>("SELECT * FROM locations WHERE id = ?")
+            .bind(&dto.contract_id)
+            .fetch_optional(&mut *tx.conn)
+            .await
+            .map_err(map_sqlite_err)?
+            .ok_or_else(|| AppError::NotFound(format!("Location introuvable : {}", dto.contract_id)))?;
+
+        // 1. Contrôle du statut actuel du contrat
+        if loc.statut == "en_cours" {
+            return Err(AppError::Validation(format!(
+                "Le retrait du contrat {} a déjà été validé (contrat actuellement en cours).",
+                loc.numero_location
+            )));
+        }
+        if loc.statut != "reserve" {
+            return Err(AppError::Validation(format!(
+                "Impossible de valider le retrait : le contrat {} est au statut '{}'. Seul un contrat 'réservé' peut faire l'objet d'un retrait.",
+                loc.numero_location, loc.statut
+            )));
+        }
+
+        // 2. Contrôle de la caution
+        if loc.montant_caution_centimes > 0 && loc.statut_caution == "non_recue" {
+            return Err(AppError::Validation(format!(
+                "Retrait refusé : la caution de {} DA n'est pas enregistrée pour le contrat {} (statut : non reçue). Veuillez enregistrer le dépôt de caution avant remise physique des pièces.",
+                loc.montant_caution_centimes / 100,
+                loc.numero_location
+            )));
+        }
+
+        // 3. Contrôle de l'utilisateur qui valide le retrait
+        let user_retrait_id = if let Some(ref uid) = dto.utilisateur_id {
+            let uid_clean = uid.trim();
+            if !uid_clean.is_empty() {
+                let u_exists: Option<(String,)> = sqlx::query_as("SELECT id FROM utilisateurs WHERE id = ? AND est_actif = 1")
+                    .bind(uid_clean)
+                    .fetch_optional(&mut *tx.conn)
+                    .await
+                    .map_err(map_sqlite_err)?;
+                if u_exists.is_none() {
+                    return Err(AppError::Validation(format!("Utilisateur introuvable ou inactif : {}", uid_clean)));
+                }
+                Some(uid_clean.to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let today_str = today_local();
+
+        let updated_notes = match (&loc.notes, &dto.notes) {
+            (Some(existing), Some(extra)) if !extra.trim().is_empty() => {
+                Some(format!("{}\n[Retrait {}] {}", existing, today_str, extra.trim()))
+            }
+            (None, Some(extra)) if !extra.trim().is_empty() => {
+                Some(format!("[Retrait {}] {}", today_str, extra.trim()))
+            }
+            _ => loc.notes.clone(),
+        };
+
+        // 4. Mise à jour de la location vers le statut 'en_cours'
+        sqlx::query(
+            "UPDATE locations 
+             SET statut = 'en_cours',
+                 date_retrait_effective = ?,
+                 utilisateur_retrait_id = COALESCE(?, utilisateur_id),
+                 notes = ?,
+                 updated_at = ?
+             WHERE id = ?"
+        )
+        .bind(&today_str)
+        .bind(&user_retrait_id)
+        .bind(&updated_notes)
+        .bind(&now)
+        .bind(&dto.contract_id)
+        .execute(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        // 5. Mise à jour des variantes et mouvements de stock
+        let lines: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT id, variante_id, article_id FROM lignes_location WHERE location_id = ?"
+        )
+        .bind(&dto.contract_id)
+        .fetch_all(&mut *tx.conn)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        for line in lines {
+            if let Some(ref var_id) = line.1 {
+                let mvt_id = format!("mvt-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+                let motif = format!("Retrait physique validé pour contrat {}", loc.numero_location);
+                sqlx::query(
+                    "INSERT INTO mouvements_stock (id, variante_id, utilisateur_id, type_mouvement, motif, date_mouvement)
+                     VALUES (?, ?, ?, 'depart_location', ?, ?)"
+                )
+                .bind(&mvt_id)
+                .bind(var_id)
+                .bind(&user_retrait_id)
+                .bind(&motif)
+                .bind(&now)
+                .execute(&mut *tx.conn)
+                .await
+                .map_err(map_sqlite_err)?;
+
+                recompute_variant_status(&mut *tx.conn, var_id).await?;
+            }
+        }
+
+        Ok(())
+    }.await {
+        Ok(()) => {
+            tx.commit().await?;
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+    };
+
+    fetch_rental_dto_by_id(pool, &contract_id).await
+}
+
+#[command]
+pub async fn validate_rental_pickup(
+    dto: ValidateRentalPickupDto,
+    state: State<'_, DbState>,
+) -> Result<RentalContractDto, AppError> {
+    execute_validate_rental_pickup(&state.pool, dto).await
 }
 
 pub async fn execute_cancel_rental(pool: &sqlx::SqlitePool, id: &str) -> Result<RentalContractDto, AppError> {

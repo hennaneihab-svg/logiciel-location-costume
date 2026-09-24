@@ -141,6 +141,7 @@ pub struct Location {
     pub numero_location: String,
     pub client_id: String,
     pub utilisateur_id: String,
+    pub utilisateur_retrait_id: Option<String>,
     pub statut: String,
     pub date_evenement: Option<String>,
     pub date_retrait_prevue: String,
@@ -227,6 +228,7 @@ pub struct RentalContractDto {
     pub status: String,
     pub event_date: Option<String>,
     pub pickup_date: String,
+    pub pickup_date_actual: Option<String>,
     pub return_date_scheduled: String,
     pub return_date_actual: Option<String>,
 
@@ -306,6 +308,13 @@ pub struct ReturnItemInputDto {
 pub struct RegisterReturnDto {
     pub contract_id: String,
     pub items: Vec<ReturnItemInputDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ValidateRentalPickupDto {
+    pub contract_id: String,
+    pub utilisateur_id: Option<String>,
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

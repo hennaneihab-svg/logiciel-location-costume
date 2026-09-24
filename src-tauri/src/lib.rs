@@ -44,6 +44,7 @@ pub fn run() {
             commands::list_rentals,
             commands::get_rental,
             commands::create_rental,
+            commands::validate_rental_pickup,
             commands::register_return,
             commands::cancel_rental,
             // Paiements

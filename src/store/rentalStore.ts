@@ -61,6 +61,10 @@ interface RentalStoreState {
   ) => Promise<RentalContract>;
 
   cancelContract: (contractId: string) => Promise<RentalContract>;
+  validatePickup: (
+    contractId: string,
+    notes?: string
+  ) => Promise<RentalContract>;
   recordContractPayment: (
     locationId: string,
     montantCentimes: number,
@@ -759,6 +763,78 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
       ),
     }));
     return get().contracts.find((c) => c.id === contractId)!;
+  },
+
+  validatePickup: async (contractId: string, notes?: string): Promise<RentalContract> => {
+    const currentUser = useAuthStore.getState().currentUser;
+    if (isTauri()) {
+      set({ isLoading: true });
+      try {
+        const updatedContract = await invokeCommand<RentalContract>("validate_rental_pickup", {
+          dto: {
+            contract_id: contractId,
+            utilisateur_id: currentUser?.id,
+            notes: notes || null,
+          },
+        });
+        set((state) => ({
+          contracts: state.contracts.map((c) => (c.id === contractId ? updatedContract : c)),
+        }));
+        updatedContract.items.forEach((item) => {
+          useStockStore.getState().changeVariantStatus(
+            item.article_id,
+            item.variant_id,
+            "en_location",
+            "Retrait client validé"
+          );
+        });
+        return updatedContract;
+      } finally {
+        set({ isLoading: false });
+      }
+    }
+
+    // Mode hors Tauri (tests / mémoire)
+    const contract = get().contracts.find((c) => c.id === contractId);
+    if (!contract) {
+      throw new Error(`Contrat avec l'identifiant ${contractId} introuvable.`);
+    }
+    if (contract.status === "en_cours") {
+      throw new Error("Ce contrat a déjà été retiré (statut 'en_cours').");
+    }
+    if (contract.status !== "reserve") {
+      throw new Error(
+        `Seul un contrat au statut 'reserve' peut être validé pour retrait. Statut actuel: '${contract.status}'.`
+      );
+    }
+    if (contract.deposit_amount_cents > 0 && contract.deposit_status === "non_recue") {
+      throw new Error(
+        "Impossible de valider le retrait : la caution n'a pas été enregistrée (statut 'non_recue')."
+      );
+    }
+
+    const today = new Date().toISOString().split("T")[0];
+    const updatedContract: RentalContract = {
+      ...contract,
+      status: "en_cours",
+      pickup_date_actual: today,
+      notes: notes ? `${contract.notes ? contract.notes + " | " : ""}${notes}` : contract.notes,
+    };
+
+    contract.items.forEach((item) => {
+      useStockStore.getState().changeVariantStatus(
+        item.article_id,
+        item.variant_id,
+        "en_location",
+        "Retrait client validé"
+      );
+    });
+
+    set((state) => ({
+      contracts: state.contracts.map((c) => (c.id === contractId ? updatedContract : c)),
+    }));
+
+    return updatedContract;
   },
 
   recordContractPayment: async (
