@@ -46,13 +46,18 @@ export const RapportsPage: React.FC = () => {
   const [activeModal, setActiveModal] = useState<"financier" | "caisse" | "stock" | null>(null);
   const [transactions, setTransactions] = useState<FinancialTransactionRowDto[]>([]);
   const [inventoryRows, setInventoryRows] = useState<StockInventoryRowDto[]>([]);
-  const [modalLoading, setModalLoading] = useState<boolean>(false);
 
-  const loadOverview = async () => {
+  const loadReportsData = async () => {
     setIsLoading(true);
     try {
-      const data = await fetchRapportsOverview(period, dateFrom, dateTo);
-      setOverview(data);
+      const [overviewData, txData, stockData] = await Promise.all([
+        fetchRapportsOverview(period, dateFrom, dateTo),
+        fetchFinancialTransactionsReport(period, dateFrom, dateTo),
+        fetchStockInventoryReport(),
+      ]);
+      setOverview(overviewData);
+      setTransactions(txData);
+      setInventoryRows(stockData);
     } catch (err) {
       console.error(err);
       toast.error("Erreur lors du chargement des données de rapports");
@@ -62,36 +67,20 @@ export const RapportsPage: React.FC = () => {
   };
 
   useEffect(() => {
-    loadOverview();
+    loadReportsData();
   }, [period, dateFrom, dateTo]);
 
-  // Ouverture d'aperçu
-  const handleOpenPreview = async (type: "financier" | "caisse" | "stock") => {
+  // Ouverture d'aperçu (consomme directement les données déjà résolues en mémoire)
+  const handleOpenPreview = (type: "financier" | "caisse" | "stock") => {
     setActiveModal(type);
-    setModalLoading(true);
-    try {
-      if (type === "financier" || type === "caisse") {
-        const tx = await fetchFinancialTransactionsReport(period, dateFrom, dateTo);
-        setTransactions(tx);
-      } else {
-        const inv = await fetchStockInventoryReport();
-        setInventoryRows(inv);
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Erreur lors du chargement de l'aperçu");
-    } finally {
-      setModalLoading(false);
-    }
   };
 
-  // Exports
+  // Exports directs depuis les données résolues et affichées (zéro second appel IPC divergent)
   const handleExportFinancierPdf = async () => {
     if (!overview) return;
     try {
       toast.info("Génération du rapport financier PDF...");
-      const tx = transactions.length > 0 ? transactions : await fetchFinancialTransactionsReport(period, dateFrom, dateTo);
-      await exportFinancialReportPdf(overview, tx);
+      await exportFinancialReportPdf(overview, transactions);
       toast.success("Rapport financier PDF exporté");
     } catch (err) {
       console.error(err);
@@ -99,11 +88,10 @@ export const RapportsPage: React.FC = () => {
     }
   };
 
-  const handleExportFinancierCsv = async () => {
+  const handleExportFinancierCsv = () => {
     if (!overview) return;
     try {
-      const tx = transactions.length > 0 ? transactions : await fetchFinancialTransactionsReport(period, dateFrom, dateTo);
-      exportFinancialReportCsv(overview, tx);
+      exportFinancialReportCsv(overview, transactions);
       toast.success("Rapport financier CSV exporté");
     } catch (err) {
       console.error(err);
@@ -111,11 +99,10 @@ export const RapportsPage: React.FC = () => {
     }
   };
 
-  const handleExportCaisseCsv = async () => {
+  const handleExportCaisseCsv = () => {
     if (!overview) return;
     try {
-      const tx = transactions.length > 0 ? transactions : await fetchFinancialTransactionsReport(period, dateFrom, dateTo);
-      exportCaisseJournalCsv(overview, tx);
+      exportCaisseJournalCsv(overview, transactions);
       toast.success("Journal de caisse CSV exporté");
     } catch (err) {
       console.error(err);
@@ -123,10 +110,9 @@ export const RapportsPage: React.FC = () => {
     }
   };
 
-  const handleExportStockCsv = async () => {
+  const handleExportStockCsv = () => {
     try {
-      const rows = inventoryRows.length > 0 ? inventoryRows : await fetchStockInventoryReport();
-      exportStockInventoryCsv(rows);
+      exportStockInventoryCsv(inventoryRows);
       toast.success("Inventaire de valorisation CSV exporté");
     } catch (err) {
       console.error(err);
@@ -204,7 +190,7 @@ export const RapportsPage: React.FC = () => {
 
           <button
             type="button"
-            onClick={loadOverview}
+            onClick={loadReportsData}
             disabled={isLoading}
             className="p-2 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             title="Rafraîchir les rapports"
@@ -467,7 +453,7 @@ export const RapportsPage: React.FC = () => {
 
             {/* Content */}
             <div className="p-6 overflow-y-auto flex-1">
-              {modalLoading ? (
+              {isLoading ? (
                 <div className="py-12 flex flex-col items-center justify-center gap-2 text-muted-foreground">
                   <RefreshCw className="w-6 h-6 animate-spin text-primary" />
                   <span className="text-xs">Chargement des données détaillées...</span>

@@ -176,4 +176,108 @@ describe("LOT RAPPORTS — Tests Vitest RapportsPage & reportService", () => {
       );
     });
   });
+
+  it("consomme directement les données affichées lors de l'export après changement de filtre, sans appel IPC divergent ni état antérieur", async () => {
+    vi.spyOn(tauriService, "isTauri").mockReturnValue(true);
+
+    const mockOverviewMonth: RapportsOverviewDto = {
+      ...mockOverview,
+      periode: "mois",
+      financier: { ...mockOverview.financier, ca_total_centimes: 65000 },
+    };
+
+    const mockOverviewToday: RapportsOverviewDto = {
+      ...mockOverview,
+      periode: "aujourdhui",
+      date_debut: "2026-10-24",
+      date_fin: "2026-10-24",
+      financier: { ...mockOverview.financier, ca_total_centimes: 12000, nombre_contrats: 1 },
+    };
+
+    const txMonth = [
+      {
+        id: "tx-month",
+        reference: "LOC-MOIS-01",
+        type_operation: "acompte",
+        client_nom: "Client Mois",
+        moyen_paiement: "especes",
+        montant_centimes: 65000,
+        date_operation: "2026-10-10T10:00:00Z",
+        operateur_nom: "Op1",
+      },
+    ];
+
+    const txToday = [
+      {
+        id: "tx-today",
+        reference: "LOC-TODAY-01",
+        type_operation: "solde",
+        client_nom: "Client Aujourd'hui",
+        moyen_paiement: "carte_bancaire",
+        montant_centimes: 12000,
+        date_operation: "2026-10-24T15:30:00Z",
+        operateur_nom: "Op2",
+      },
+    ];
+
+    const invokeSpy = vi.spyOn(tauriService, "invokeCommand").mockImplementation(async (cmd: string, args: any) => {
+      if (cmd === "get_rapports_overview") {
+        if (args?.periode === "aujourdhui") return mockOverviewToday as any;
+        return mockOverviewMonth as any;
+      }
+      if (cmd === "get_financial_transactions_report") {
+        if (args?.periode === "aujourdhui") return txToday as any;
+        return txMonth as any;
+      }
+      return [] as any;
+    });
+
+    const exportCsvSpy = vi.spyOn(reportService, "exportFinancialReportCsv").mockImplementation(() => {});
+
+    render(<RapportsPage />);
+
+    // 1. Initialement chargé avec le filtre par défaut "mois"
+    await waitFor(() => {
+      expect(screen.getByTestId("ca-total").textContent).toContain("65 000");
+    });
+
+    // 2. L'utilisateur change le filtre temporel vers "Aujourd'hui"
+    const todayButton = screen.getByText("Aujourd'hui");
+    fireEvent.click(todayButton);
+
+    // Vérifie que l'écran affiche les nouvelles données résolues
+    await waitFor(() => {
+      expect(screen.getByTestId("ca-total").textContent).toContain("12 000");
+    });
+
+    // Enregistre le nombre d'appels IPC avant le clic d'export
+    const callsBeforeExport = invokeSpy.mock.calls.length;
+
+    // 3. Déclenchement de l'export CSV
+    const csvButton = screen.getByTitle("Exporter le rapport financier en CSV / Excel");
+    fireEvent.click(csvButton);
+
+    // 4. Vérification stricte :
+    // a) Zéro nouvel appel IPC au moment du clic sur Exporter (aucun recalcul ni appel divergent)
+    expect(invokeSpy.mock.calls.length).toBe(callsBeforeExport);
+
+    // b) L'export reçoit exactement les données de la nouvelle période sélectionnée (pas "mois" ni l'état antérieur)
+    expect(exportCsvSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        periode: "aujourdhui",
+        financier: expect.objectContaining({ ca_total_centimes: 12000, nombre_contrats: 1 }),
+      }),
+      expect.arrayContaining([
+        expect.objectContaining({
+          reference: "LOC-TODAY-01",
+          client_nom: "Client Aujourd'hui",
+          montant_centimes: 12000,
+        }),
+      ])
+    );
+
+    // c) Aucune donnée de l'ancienne période n'est présente dans l'export
+    const exportedRows = exportCsvSpy.mock.calls[0]?.[1] || [];
+    expect(exportedRows.some((r) => r.reference === "LOC-MOIS-01")).toBe(false);
+  });
 });
