@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { X, CheckCircle2, AlertTriangle, Scissors, Clock, User, Sparkles } from "lucide-react";
+import { X, CheckCircle2, AlertTriangle, Scissors, Clock, User } from "lucide-react";
 import { EssaiCabineDetailDto } from "../../types/matrix";
 
 interface EssaiCabineModalProps {

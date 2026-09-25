@@ -29,7 +29,7 @@ import {
   isClientLoyal,
 } from "@/store/clientStore";
 import { toast } from "sonner";
-import type { CustomerRentalStatus, ClientMensurations, CreateMensurationsDto } from "@/types/customer";
+import type { CustomerRentalStatus, ClientMensurations } from "@/types/customer";
 import { ouvrirWhatsApp } from "@/lib/whatsapp";
 import { WHATSAPP_TEMPLATES } from "@/lib/whatsappTemplates";
 
