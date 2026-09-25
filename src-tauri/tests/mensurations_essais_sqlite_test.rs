@@ -5,7 +5,6 @@ use costume_rental_lib::commands::matrix::{get_availability_matrix_internal, val
 use sqlx::Row;
 use std::fs;
 
-
 #[tokio::test]
 async fn test_migration_0015_and_fk_integrity() {
     let test_dir = std::env::temp_dir().join(format!("test_mig_0015_{}", chrono::Utc::now().timestamp_micros()));
@@ -33,15 +32,16 @@ async fn test_migration_0015_and_fk_integrity() {
     let _ = fs::remove_dir_all(&test_dir);
 }
 
+/// Test I4 : vérifie qu'un client_mensurations mis à jour conserve l'ancienne valeur consultable dans l'historique
 #[tokio::test]
-async fn test_create_mensurations_and_history_archival() {
-    let test_dir = std::env::temp_dir().join(format!("test_mensurations_{}", chrono::Utc::now().timestamp_micros()));
+async fn test_client_mensurations_update_preserves_old_value_in_history() {
+    let test_dir = std::env::temp_dir().join(format!("test_mensurations_hist_{}", chrono::Utc::now().timestamp_micros()));
     fs::create_dir_all(&test_dir).expect("Failed to create test dir");
     let pool = db::init_db(&test_dir).await.expect("Failed to init db");
 
     let client_id = "cli-001";
 
-    // 1. Première prise de mesure
+    // 1. Première prise de mesure (historique initial)
     let m1 = execute_create_client_mensurations(
         &pool,
         client_id,
@@ -78,7 +78,7 @@ async fn test_create_mensurations_and_history_archival() {
         client_id,
         CreateMensurationsDto {
             tour_poitrine: Some(88.0),
-            tour_taille: Some(65.0), // Perte de 3cm
+            tour_taille: Some(65.0), // Évolution taille : 68 -> 65
             tour_hanches: Some(92.0),
             longueur_bras: Some(58.0),
             longueur_jambe: Some(102.0),
@@ -95,7 +95,7 @@ async fn test_create_mensurations_and_history_archival() {
     assert_eq!(m2.est_actuel, 1);
     assert_eq!(m2.tour_taille, Some(65.0));
 
-    // 3. Vérifier que la nouvelle active est m2
+    // 3. Vérifier que la nouvelle active est m2 avec la nouvelle valeur
     let active2 = execute_get_client_mensurations_active(&pool, client_id)
         .await
         .expect("Failed to fetch active")
@@ -103,15 +103,19 @@ async fn test_create_mensurations_and_history_archival() {
     assert_eq!(active2.id, m2.id);
     assert_eq!(active2.tour_taille, Some(65.0));
 
-    // 4. Vérifier l'historique complet (m2 puis m1)
+    // 4. Vérifier l'historique complet : l'ancienne valeur (68.0) est conservée et consultable
     let history = execute_get_client_mensurations_history(&pool, client_id)
         .await
         .expect("Failed to fetch history");
-    assert_eq!(history.len(), 2);
+    assert_eq!(history.len(), 2, "L'historique doit contenir 2 enregistrements");
     assert_eq!(history[0].id, m2.id);
+    assert_eq!(history[0].tour_taille, Some(65.0));
     assert_eq!(history[0].est_actuel, 1);
+
+    // L'ancienne valeur est archivée avec est_actuel = 0
     assert_eq!(history[1].id, m1.id);
-    assert_eq!(history[1].est_actuel, 0);
+    assert_eq!(history[1].tour_taille, Some(68.0), "L'ancienne valeur de taille doit être conservée intacte");
+    assert_eq!(history[1].est_actuel, 0, "L'ancienne mesure doit être marquée archivée (est_actuel = 0)");
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
@@ -194,7 +198,7 @@ async fn test_create_essai_cabine_and_duplicate_rejection() {
     assert_eq!(essai.statut, "en_cours");
     assert_eq!(essai.variante_id, var_id);
 
-    // 2. Tenter un deuxième essai sur la même pièce -> doit être rejeté
+    // 2. Tenter un deuxième essai simultané sur la même pièce -> doit être rejeté
     let err = execute_create_essai_cabine(
         &pool,
         CreateEssaiCabineDto {
@@ -217,8 +221,9 @@ async fn test_create_essai_cabine_and_duplicate_rejection() {
     let _ = fs::remove_dir_all(&test_dir);
 }
 
+/// Test J4 : vérifie qu'une clôture d'essai avec issue "retouche_necessaire" crée bien un envoi dans pressing_envois sans double saisie
 #[tokio::test]
-async fn test_finish_essai_cabine_convient_and_retouche_chaining() {
+async fn test_finish_essai_cabine_retouche_necessaire_creates_pressing_envoi_without_duplicate() {
     let test_dir = std::env::temp_dir().join(format!("test_finish_essai_{}", chrono::Utc::now().timestamp_micros()));
     fs::create_dir_all(&test_dir).expect("Failed to create test dir");
     let pool = db::init_db(&test_dir).await.expect("Failed to init db");
@@ -241,7 +246,7 @@ async fn test_finish_essai_cabine_convient_and_retouche_chaining() {
     .await
     .expect("Échec création essai");
 
-    // 2. Clôture avec résultat retouche_necessaire et envoi atelier
+    // 2. Clôture avec résultat retouche_necessaire et envoi atelier direct
     let finished = execute_finish_essai_cabine(
         &pool,
         FinishEssaiCabineDto {
@@ -260,9 +265,9 @@ async fn test_finish_essai_cabine_convient_and_retouche_chaining() {
 
     assert_eq!(finished.statut, "termine");
     assert_eq!(finished.resultat, Some("retouche_necessaire".to_string()));
-    assert!(finished.pressing_envoi_id.is_some(), "Un envoi retouche/pressing doit être lié");
+    assert!(finished.pressing_envoi_id.is_some(), "Un envoi retouche/pressing doit être lié directement sans double saisie");
 
-    // 3. Vérifier que la variante de stock est passée à 'en_retouche'
+    // 3. Vérifier que la variante de stock est automatiquement passée à 'en_retouche'
     let var_statut: (String,) = sqlx::query_as("SELECT statut FROM variantes_stock WHERE id = ?")
         .bind(var_id)
         .fetch_one(&pool)
@@ -270,8 +275,8 @@ async fn test_finish_essai_cabine_convient_and_retouche_chaining() {
         .expect("Fetch var statut");
     assert_eq!(var_statut.0, "en_retouche");
 
-    // 4. Vérifier l'envoi créé dans pressing_envois
-    let p_row = sqlx::query("SELECT type_traitement, statut, date_retour_prevue, cout_centimes FROM pressing_envois WHERE id = ?")
+    // 4. Vérifier l'envoi créé dans pressing_envois avec les données fournies (sans ressaisie)
+    let p_row = sqlx::query("SELECT type_traitement, statut, date_retour_prevue, cout_centimes, notes FROM pressing_envois WHERE id = ?")
         .bind(finished.pressing_envoi_id.as_ref().unwrap())
         .fetch_one(&pool)
         .await
@@ -280,16 +285,20 @@ async fn test_finish_essai_cabine_convient_and_retouche_chaining() {
     let t_type: String = p_row.get("type_traitement");
     let p_stat: String = p_row.get("statut");
     let p_cout: i64 = p_row.get("cout_centimes");
+    let p_notes: Option<String> = p_row.get("notes");
+
     assert_eq!(t_type, "retouche");
     assert_eq!(p_stat, "envoye");
     assert_eq!(p_cout, 1500);
+    assert!(p_notes.unwrap_or_default().contains("Ourlet 3cm"));
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
 
+/// Test J4 : vérifie qu'une variante en essai_cabine est refusée par validate_variant_availability pour une nouvelle réservation sur la période concernée
 #[tokio::test]
-async fn test_matrix_shows_essayage_slot_and_blocks_availability() {
+async fn test_variant_in_essai_cabine_rejected_by_validate_variant_availability() {
     let test_dir = std::env::temp_dir().join(format!("test_matrix_essayage_{}", chrono::Utc::now().timestamp_micros()));
     fs::create_dir_all(&test_dir).expect("Failed to create test dir");
     let pool = db::init_db(&test_dir).await.expect("Failed to init db");
@@ -325,15 +334,18 @@ async fn test_matrix_shows_essayage_slot_and_blocks_availability() {
     assert_eq!(slot.date_debut, "2026-09-25");
     assert_eq!(slot.date_fin, "2026-09-25");
 
-    // 3. Valider la disponibilité pour cette journée -> doit être refusée avec motif d'essayage
+    // 3. Valider la disponibilité pour cette journée -> doit être REFUSÉE avec conflit SlotNature::Essayage
     let validation = validate_variant_availability(&pool, var_id, "2026-09-25", "2026-09-25", None)
         .await
         .expect("Validate availability");
 
-    assert!(!validation.disponible, "La variante ne doit pas être disponible pendant son essayage");
-    assert_eq!(validation.conflit_nature, Some(SlotNature::Essayage));
+    assert!(!validation.disponible, "La variante ne doit pas être disponible pendant son essayage en cabine");
+    assert_eq!(
+        validation.conflit_nature,
+        Some(SlotNature::Essayage),
+        "Le conflit doit explicitement désigner l'essayage"
+    );
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
 }
-
