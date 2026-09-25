@@ -42,9 +42,12 @@
     --radius: 0.5rem;
 
     /* Codes couleur métier (nuances adoucies sur fond lin validées en H0) */
-    --status-reserved: #1D4ED8;
-    --status-reserved-bg: #EFF6FF;
-    --status-reserved-border: #BFDBFE;
+    /* Réservé (attente de retrait physique) : Teinte pétrole de la marque */
+    --status-reserved: #1E5F5C;
+    --status-reserved-bg: #E8F2F1;
+    --status-reserved-border: #B9DDD9;
+
+    /* En cours (location active après retrait confirmé) : Bleu cobalt */
     --status-in-progress: #1D4ED8;
     --status-in-progress-bg: #EFF6FF;
     --status-in-progress-border: #BFDBFE;
@@ -52,6 +55,7 @@
     --status-rental-bg: #EFF6FF;
     --status-rental-border: #BFDBFE;
 
+    /* Pressing / Nettoyage cycle standard : Ambre chaud */
     --status-cleaning: #B45309;
     --status-cleaning-bg: #FEF3C7;
     --status-cleaning-border: #FDE68A;
@@ -59,10 +63,17 @@
     --status-pressing-bg: #FEF3C7;
     --status-pressing-border: #FDE68A;
 
+    /* Litige dégradation / Retenue caution : Pourpre feutré distinct du pressing */
+    --status-dispute: #7E22CE;
+    --status-dispute-bg: #FAF5FF;
+    --status-dispute-border: #E9D5FF;
+
+    /* Retard / Alerte : Rouge carmin */
     --status-late: #B91C1C;
     --status-late-bg: #FEE2E2;
     --status-late-border: #FECACA;
 
+    /* Restitué conforme / Succès : Émeraude doux */
     --status-completed: #15803D;
     --status-completed-bg: #ECFDF5;
     --status-completed-border: #A7F3D0;
@@ -98,9 +109,10 @@
     --ring: 177 45% 42%;
 
     /* Statuts métier en dark mode */
-    --status-reserved: #60A5FA;
-    --status-reserved-bg: rgba(30, 58, 138, 0.35);
-    --status-reserved-border: rgba(96, 165, 250, 0.4);
+    --status-reserved: #2DD4BF;
+    --status-reserved-bg: rgba(19, 78, 74, 0.4);
+    --status-reserved-border: rgba(45, 212, 191, 0.4);
+
     --status-in-progress: #60A5FA;
     --status-in-progress-bg: rgba(30, 58, 138, 0.35);
     --status-in-progress-border: rgba(96, 165, 250, 0.4);
@@ -114,6 +126,10 @@
     --status-pressing: #FBBF24;
     --status-pressing-bg: rgba(120, 53, 15, 0.35);
     --status-pressing-border: rgba(251, 191, 36, 0.4);
+
+    --status-dispute: #C084FC;
+    --status-dispute-bg: rgba(88, 28, 135, 0.35);
+    --status-dispute-border: rgba(192, 132, 252, 0.4);
 
     --status-late: #F87171;
     --status-late-bg: rgba(127, 29, 29, 0.35);

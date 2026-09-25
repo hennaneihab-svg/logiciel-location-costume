@@ -465,8 +465,8 @@ export const ClotureCaisseView: React.FC = () => {
                           tx.type === "vente_directe"
                             ? "bg-status-completed-bg text-status-completed border-status-completed-border"
                             : tx.type === "location_solde"
-                            ? "bg-status-reserved-bg text-status-reserved border-status-reserved-border"
-                            : "bg-status-cleaning-bg text-status-cleaning border-status-cleaning-border"
+                            ? "bg-status-in-progress-bg text-status-in-progress border-status-in-progress-border"
+                            : "bg-status-reserved-bg text-status-reserved border-status-reserved-border"
                         }`}
                       >
                         {tx.type === "vente_directe"

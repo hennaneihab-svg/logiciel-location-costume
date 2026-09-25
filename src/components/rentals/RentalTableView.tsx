@@ -122,7 +122,7 @@ export const RentalTableView: React.FC = () => {
       case "litige":
         return {
           label: "Litige dégradation",
-          className: "bg-status-cleaning-bg text-status-cleaning border-status-cleaning-border font-bold",
+          className: "bg-status-dispute-bg text-status-dispute border-status-dispute-border font-bold",
           icon: AlertTriangle,
         };
       default:

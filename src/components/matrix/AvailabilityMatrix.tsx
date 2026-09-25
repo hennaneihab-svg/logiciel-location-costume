@@ -168,8 +168,8 @@ export const AvailabilityMatrix: React.FC = () => {
     switch (nature) {
       case "location":
         return {
-          bg: "bg-status-reserved-bg text-status-reserved border-status-reserved-border hover:opacity-90",
-          badge: "bg-status-reserved text-white",
+          bg: "bg-status-rental-bg text-status-rental border-status-rental-border hover:opacity-90",
+          badge: "bg-status-rental text-white",
           label: "Location",
         };
       case "pressing":
@@ -422,8 +422,8 @@ export const AvailabilityMatrix: React.FC = () => {
         {/* Légende Interactive & Drag Help */}
         <div className="flex flex-wrap items-center gap-2.5 text-[11px]">
           <span className="text-muted-foreground font-medium">Légende :</span>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-status-reserved-bg text-status-reserved border border-status-reserved-border">
-            <span className="w-2 h-2 rounded-full bg-status-reserved" />
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-status-rental-bg text-status-rental border border-status-rental-border">
+            <span className="w-2 h-2 rounded-full bg-status-rental" />
             <span className="font-semibold">Location (Glissable)</span>
           </div>
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-status-cleaning-bg text-status-cleaning border border-status-cleaning-border">
