@@ -228,7 +228,7 @@ async fn test_finish_essai_cabine_retouche_necessaire_creates_pressing_envoi_wit
     fs::create_dir_all(&test_dir).expect("Failed to create test dir");
     let pool = db::init_db(&test_dir).await.expect("Failed to init db");
 
-    let var_id = "var-002";
+    let var_id = "var-012";
 
     // 1. Créer un essai
     let essai = execute_create_essai_cabine(
