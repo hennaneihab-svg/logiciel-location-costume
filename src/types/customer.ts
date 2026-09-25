@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // TYPES MODULE B — GESTION DES CLIENTS
 // ============================================================================
 
@@ -67,3 +67,66 @@ export type ClientFilterOption =
   | "loyal"
   | "blacklisted"
   | "active";
+
+// ============================================================================
+// MOD-2: MENSURATIONS STRUCTURÉES
+// ============================================================================
+
+export interface ClientMensurations {
+  id: string;
+  client_id: string;
+  tour_poitrine: number | null;
+  tour_taille: number | null;
+  tour_hanches: number | null;
+  longueur_bras: number | null;
+  longueur_jambe: number | null;
+  tour_cou: number | null;
+  pointure: number | null;
+  stature: number | null;
+  notes_mensurations: string | null;
+  date_mesure: string;
+  est_actuel: number;
+  created_at: string;
+}
+
+export interface CreateMensurationsDto {
+  tour_poitrine?: number | null;
+  tour_taille?: number | null;
+  tour_hanches?: number | null;
+  longueur_bras?: number | null;
+  longueur_jambe?: number | null;
+  tour_cou?: number | null;
+  pointure?: number | null;
+  stature?: number | null;
+  notes_mensurations?: string | null;
+  date_mesure?: string | null;
+}
+
+export interface MensurationSearchFilterDto {
+  min_tour_poitrine?: number | null;
+  max_tour_poitrine?: number | null;
+  min_tour_taille?: number | null;
+  max_tour_taille?: number | null;
+  min_tour_hanches?: number | null;
+  max_tour_hanches?: number | null;
+  min_stature?: number | null;
+  max_stature?: number | null;
+  min_pointure?: number | null;
+  max_pointure?: number | null;
+}
+
+export interface ClientWithActiveMensurationsDto {
+  id: string;
+  prenom: string;
+  nom: string;
+  email: string | null;
+  telephone: string;
+  ville: string | null;
+  tour_poitrine: number | null;
+  tour_taille: number | null;
+  tour_hanches: number | null;
+  stature: number | null;
+  pointure: number | null;
+  date_mesure: string | null;
+}
+

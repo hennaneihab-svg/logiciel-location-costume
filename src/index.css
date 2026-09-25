@@ -80,7 +80,13 @@
     --status-success: #15803D;
     --status-success-bg: #ECFDF5;
     --status-success-border: #A7F3D0;
+
+    /* Essayage en cabine : Rose poudré couture / framboise feutrée */
+    --status-fitting: #BE185D;
+    --status-fitting-bg: #FDF2F8;
+    --status-fitting-border: #FBCFE8;
   }
+
 
   .dark {
     --background: 60 12% 6.7%;          /* #12130F Noir carbone */
@@ -141,8 +147,13 @@
     --status-success: #34D399;
     --status-success-bg: rgba(6, 78, 59, 0.35);
     --status-success-border: rgba(52, 211, 153, 0.4);
+
+    --status-fitting: #F472B6;
+    --status-fitting-bg: rgba(131, 24, 67, 0.35);
+    --status-fitting-border: rgba(244, 114, 182, 0.4);
   }
 }
+
 
 @layer base {
   * {

@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import {
   X,
   Phone,
@@ -17,7 +17,10 @@ import {
   AlertTriangle,
   Plus,
   MessageCircle,
+  Ruler,
+  History,
 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { formatCents } from "@/lib/utils";
 import {
   useClientStore,
@@ -26,7 +29,7 @@ import {
   isClientLoyal,
 } from "@/store/clientStore";
 import { toast } from "sonner";
-import type { CustomerRentalStatus } from "@/types/customer";
+import type { CustomerRentalStatus, ClientMensurations, CreateMensurationsDto } from "@/types/customer";
 import { ouvrirWhatsApp } from "@/lib/whatsapp";
 import { WHATSAPP_TEMPLATES } from "@/lib/whatsappTemplates";
 
@@ -41,6 +44,44 @@ export const ClientDetailModal: React.FC = () => {
   } = useClientStore();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // MOD-2: État mensurations structurées & historique
+  const [activeMensurations, setActiveMensurations] = useState<ClientMensurations | null>(null);
+  const [mensurationsHistory, setMensurationsHistory] = useState<ClientMensurations[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [isAddingMeasurement, setIsAddingMeasurement] = useState(false);
+
+  // Formulaire d'ajout de prise de mesure
+  const [mPoitrine, setMPoitrine] = useState("");
+  const [mTaille, setMTaille] = useState("");
+  const [mHanches, setMHanches] = useState("");
+  const [mStature, setMStature] = useState("");
+  const [mBras, setMBras] = useState("");
+  const [mJambe, setMJambe] = useState("");
+  const [mCou, setMCou] = useState("");
+  const [mPointure, setMPointure] = useState("");
+  const [mNotes, setMNotes] = useState("");
+  const [isSavingM, setIsSavingM] = useState(false);
+
+  const loadMensurations = async (clientId: string) => {
+    try {
+      const active = await invoke<ClientMensurations | null>("get_client_mensurations_active", { clientId });
+      setActiveMensurations(active);
+      const hist = await invoke<ClientMensurations[]>("get_client_mensurations_history", { clientId });
+      setMensurationsHistory(hist);
+    } catch (err) {
+      console.warn("Mensurations non disponibles via Tauri :", err);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedClient?.id) {
+      loadMensurations(selectedClient.id);
+      setIsAddingMeasurement(false);
+      setShowHistory(false);
+    }
+  }, [selectedClient?.id]);
+
 
   if (!isDetailModalOpen || !selectedClient) return null;
 
@@ -75,7 +116,46 @@ export const ClientDetailModal: React.FC = () => {
     }
   };
 
+  const handleSaveMeasurement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!client?.id) return;
+    setIsSavingM(true);
+    try {
+      await invoke("create_client_mensurations", {
+        clientId: client.id,
+        dto: {
+          tour_poitrine: mPoitrine ? parseFloat(mPoitrine) : null,
+          tour_taille: mTaille ? parseFloat(mTaille) : null,
+          tour_hanches: mHanches ? parseFloat(mHanches) : null,
+          stature: mStature ? parseFloat(mStature) : null,
+          longueur_bras: mBras ? parseFloat(mBras) : null,
+          longueur_jambe: mJambe ? parseFloat(mJambe) : null,
+          tour_cou: mCou ? parseFloat(mCou) : null,
+          pointure: mPointure ? parseFloat(mPointure) : null,
+          notes_mensurations: mNotes.trim() || null,
+        },
+      });
+      toast.success("Nouvelles mensurations enregistrées avec succès !");
+      setIsAddingMeasurement(false);
+      setMPoitrine("");
+      setMTaille("");
+      setMHanches("");
+      setMStature("");
+      setMBras("");
+      setMJambe("");
+      setMCou("");
+      setMPointure("");
+      setMNotes("");
+      loadMensurations(client.id);
+    } catch (err: any) {
+      toast.error(err?.toString() || "Erreur lors de l'enregistrement");
+    } finally {
+      setIsSavingM(false);
+    }
+  };
+
   const getStatusBadge = (status: CustomerRentalStatus) => {
+
     switch (status) {
       case "en_cours":
         return {
@@ -420,6 +500,271 @@ export const ClientDetailModal: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {/* Section 2.5 : Mensurations & Profil Atelier (MOD-2) */}
+          <div className="p-4 rounded-xl bg-card border border-border space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-status-reserved-bg text-status-reserved border border-status-reserved-border flex items-center justify-center">
+                  <Ruler className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-primary">
+                    Mensurations & Profil Atelier
+                  </h4>
+                  {activeMensurations && (
+                    <span className="text-[10px] text-muted-foreground">
+                      Dernière prise de mesure : {activeMensurations.date_mesure}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {mensurationsHistory.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowHistory(!showHistory)}
+                    className="px-2.5 py-1 rounded-lg bg-secondary hover:bg-muted text-[11px] font-medium text-foreground border border-border flex items-center gap-1 transition-colors"
+                  >
+                    <History className="w-3 h-3 text-muted-foreground" />
+                    <span>{showHistory ? "Masquer historique" : `Historique (${mensurationsHistory.length})`}</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setIsAddingMeasurement(!isAddingMeasurement)}
+                  className="px-2.5 py-1 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>{isAddingMeasurement ? "Annuler" : "Nouvelle mesure"}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Formulaire nouvelle prise de mesure */}
+            {isAddingMeasurement && (
+              <form onSubmit={handleSaveMeasurement} className="p-3.5 rounded-xl bg-secondary/30 border border-border space-y-3 animate-in fade-in">
+                <span className="text-xs font-semibold text-foreground block">
+                  Enregistrer un nouveau relevé de mesures (en cm)
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div>
+                    <label className="text-[10px] text-muted-foreground block mb-0.5">Poitrine (cm)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={mPoitrine}
+                      onChange={(e) => setMPoitrine(e.target.value)}
+                      placeholder="88"
+                      className="w-full h-7 px-2 rounded-md bg-card border border-border text-xs text-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground block mb-0.5">Taille (cm)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={mTaille}
+                      onChange={(e) => setMTaille(e.target.value)}
+                      placeholder="68"
+                      className="w-full h-7 px-2 rounded-md bg-card border border-border text-xs text-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground block mb-0.5">Hanches (cm)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={mHanches}
+                      onChange={(e) => setMHanches(e.target.value)}
+                      placeholder="94"
+                      className="w-full h-7 px-2 rounded-md bg-card border border-border text-xs text-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground block mb-0.5">Stature (cm)</label>
+                    <input
+                      type="number"
+                      step="1"
+                      value={mStature}
+                      onChange={(e) => setMStature(e.target.value)}
+                      placeholder="172"
+                      className="w-full h-7 px-2 rounded-md bg-card border border-border text-xs text-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground block mb-0.5">Bras (cm)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={mBras}
+                      onChange={(e) => setMBras(e.target.value)}
+                      placeholder="60"
+                      className="w-full h-7 px-2 rounded-md bg-card border border-border text-xs text-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground block mb-0.5">Jambe (cm)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={mJambe}
+                      onChange={(e) => setMJambe(e.target.value)}
+                      placeholder="102"
+                      className="w-full h-7 px-2 rounded-md bg-card border border-border text-xs text-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground block mb-0.5">Cou (cm)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={mCou}
+                      onChange={(e) => setMCou(e.target.value)}
+                      placeholder="36"
+                      className="w-full h-7 px-2 rounded-md bg-card border border-border text-xs text-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground block mb-0.5">Pointure</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={mPointure}
+                      onChange={(e) => setMPointure(e.target.value)}
+                      placeholder="38.5"
+                      className="w-full h-7 px-2 rounded-md bg-card border border-border text-xs text-foreground"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-muted-foreground block mb-0.5">Observations atelier</label>
+                  <input
+                    type="text"
+                    value={mNotes}
+                    onChange={(e) => setMNotes(e.target.value)}
+                    placeholder="Remarques retouche, cambrure, posture..."
+                    className="w-full h-7 px-2 rounded-md bg-card border border-border text-xs text-foreground"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingMeasurement(false)}
+                    className="px-3 py-1 rounded-md text-xs border border-border hover:bg-secondary"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingM}
+                    className="px-3 py-1 rounded-md text-xs font-semibold bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {isSavingM ? "Enregistrement..." : "Sauvegarder"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Affichage des mensurations actives */}
+            {activeMensurations ? (
+              <div className="space-y-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="p-2 rounded-lg bg-secondary/40 border border-border">
+                    <span className="text-[10px] text-muted-foreground block">Poitrine</span>
+                    <span className="font-bold text-foreground">
+                      {activeMensurations.tour_poitrine ? `${activeMensurations.tour_poitrine} cm` : "—"}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-secondary/40 border border-border">
+                    <span className="text-[10px] text-muted-foreground block">Taille</span>
+                    <span className="font-bold text-foreground">
+                      {activeMensurations.tour_taille ? `${activeMensurations.tour_taille} cm` : "—"}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-secondary/40 border border-border">
+                    <span className="text-[10px] text-muted-foreground block">Hanches</span>
+                    <span className="font-bold text-foreground">
+                      {activeMensurations.tour_hanches ? `${activeMensurations.tour_hanches} cm` : "—"}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-secondary/40 border border-border">
+                    <span className="text-[10px] text-muted-foreground block">Stature</span>
+                    <span className="font-bold text-foreground">
+                      {activeMensurations.stature ? `${activeMensurations.stature} cm` : "—"}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-secondary/40 border border-border">
+                    <span className="text-[10px] text-muted-foreground block">Longueur bras</span>
+                    <span className="font-bold text-foreground">
+                      {activeMensurations.longueur_bras ? `${activeMensurations.longueur_bras} cm` : "—"}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-secondary/40 border border-border">
+                    <span className="text-[10px] text-muted-foreground block">Longueur jambe</span>
+                    <span className="font-bold text-foreground">
+                      {activeMensurations.longueur_jambe ? `${activeMensurations.longueur_jambe} cm` : "—"}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-secondary/40 border border-border">
+                    <span className="text-[10px] text-muted-foreground block">Tour de cou</span>
+                    <span className="font-bold text-foreground">
+                      {activeMensurations.tour_cou ? `${activeMensurations.tour_cou} cm` : "—"}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-secondary/40 border border-border">
+                    <span className="text-[10px] text-muted-foreground block">Pointure</span>
+                    <span className="font-bold text-foreground">
+                      {activeMensurations.pointure ?? "—"}
+                    </span>
+                  </div>
+                </div>
+
+                {activeMensurations.notes_mensurations && (
+                  <p className="text-[11px] text-muted-foreground italic bg-secondary/20 p-2 rounded-md border border-border/50">
+                    Observation : {activeMensurations.notes_mensurations}
+                  </p>
+                )}
+              </div>
+            ) : (
+              !isAddingMeasurement && (
+                <div className="p-4 rounded-lg bg-secondary/20 border border-dashed border-border text-center text-xs text-muted-foreground">
+                  Aucune mensuration structurée enregistrée pour cette cliente.
+                </div>
+              )
+            )}
+
+            {/* Tableau d'historique des anciennes prises de mesure */}
+            {showHistory && mensurationsHistory.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-border space-y-1.5">
+                <span className="text-[11px] font-bold text-foreground block">
+                  Historique des relevés précédents :
+                </span>
+                <div className="divide-y divide-border/60 max-h-36 overflow-y-auto rounded-lg border border-border text-[11px]">
+                  {mensurationsHistory.map((h) => (
+                    <div key={h.id} className="p-2 flex items-center justify-between hover:bg-secondary/30">
+                      <div>
+                        <span className="font-semibold text-foreground mr-2">{h.date_mesure}</span>
+                        <span className="text-muted-foreground">
+                          Poitrine: {h.tour_poitrine || "—"} • Taille: {h.tour_taille || "—"} • Hanches: {h.tour_hanches || "—"} • Stature: {h.stature || "—"}
+                        </span>
+                      </div>
+                      {h.est_actuel === 1 && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-status-completed-bg text-status-completed font-bold">
+                          Actuel
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
 
           {/* Section 3 : Historique Complet des Locations */}
           <div className="space-y-3">

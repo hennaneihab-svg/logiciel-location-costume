@@ -108,7 +108,18 @@ pub fn run() {
             commands::get_rapports_overview,
             commands::get_financial_transactions_report,
             commands::get_stock_inventory_report,
+            // MOD-2: Mensurations structurées
+            commands::create_client_mensurations,
+            commands::get_client_mensurations_active,
+            commands::get_client_mensurations_history,
+            commands::search_clients_by_mensurations,
+            // MOD-3: Étape Essayage en cabine
+            commands::create_essai_cabine,
+            commands::finish_essai_cabine,
+            commands::cancel_essai_cabine,
+            commands::list_essais_cabine,
         ])
+
         .run(tauri::generate_context!())
         .expect("Erreur fatale lors du lancement de l'application Tauri");
 }

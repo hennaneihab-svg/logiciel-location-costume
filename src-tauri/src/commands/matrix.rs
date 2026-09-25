@@ -15,7 +15,9 @@ pub enum SlotNature {
     Location,
     Pressing,
     Retard,
+    Essayage,
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AvailabilitySlot {
@@ -332,6 +334,38 @@ pub async fn validate_variant_availability(
         }
     }
 
+    // 5. Conflit avec un essayage en cours
+    let essai_conflict = sqlx::query(
+        "SELECT ec.numero_essai, ec.date_debut, ec.date_fin_prevue
+         FROM essais_cabine ec
+         WHERE ec.variante_id = ?
+           AND ec.statut = 'en_cours'
+           AND date(ec.date_debut) <= ?
+           AND date(ec.date_fin_prevue) >= ?
+         LIMIT 1"
+    )
+    .bind(variante_id)
+    .bind(&req_end_str)
+    .bind(&req_start_str)
+    .fetch_optional(pool)
+    .await
+    .map_err(map_sqlite_err)?;
+
+    if let Some(row) = essai_conflict {
+        let num: String = row.get("numero_essai");
+        let start: String = row.get("date_debut");
+        let end: String = row.get("date_fin_prevue");
+        return Ok(AvailabilityValidationResult {
+            disponible: false,
+            motif_refus: Some(format!(
+                "La pièce est actuellement en cabine d'essayage ({}) du {} au {}.",
+                num, start, end
+            )),
+            conflit_nature: Some(SlotNature::Essayage),
+            conflit_reference: Some(num),
+        });
+    }
+
     Ok(AvailabilityValidationResult {
         disponible: true,
         motif_refus: None,
@@ -339,6 +373,7 @@ pub async fn validate_variant_availability(
         conflit_reference: None,
     })
 }
+
 
 // ============================================================================
 // A1. QUERY RUST MATRICE DE DISPONIBILITÉ PAR VARIANTE × PLAGE DE DATES
@@ -555,8 +590,54 @@ pub async fn get_availability_matrix_internal(
             }
         }
 
+        // 4. Essais en cabine actifs pour cette variante
+        let essais = sqlx::query(
+            "SELECT ec.id, ec.numero_essai, ec.date_debut, ec.date_fin_prevue, ec.statut, ec.client_nom_libre,
+                    c.prenom as client_prenom, c.nom as client_nom
+             FROM essais_cabine ec
+             LEFT JOIN clients c ON ec.client_id = c.id
+             WHERE ec.variante_id = ?
+               AND ec.statut = 'en_cours'
+             ORDER BY ec.date_debut ASC"
+        )
+        .bind(&var_id)
+        .fetch_all(pool)
+        .await
+        .map_err(map_sqlite_err)?;
+
+        for es in essais {
+            let eid: String = es.get("id");
+            let enum_code: String = es.get("numero_essai");
+            let ed_debut_str: String = es.get("date_debut");
+            let ed_fin_str: String = es.get("date_fin_prevue");
+            let client_libre: Option<String> = es.get("client_nom_libre");
+            let cp: Option<String> = es.get("client_prenom");
+            let cn: Option<String> = es.get("client_nom");
+
+            let c_name = if let (Some(p), Some(n)) = (cp, cn) {
+                Some(format!("{} {}", p, n))
+            } else {
+                client_libre
+            };
+
+            if let (Some(es_date), Some(ee_date)) = (parse_date_ymd(&ed_debut_str), parse_date_ymd(&ed_fin_str)) {
+                if es_date <= window_end && ee_date >= window_start {
+                    slots.push(AvailabilitySlot {
+                        date_debut: es_date.format("%Y-%m-%d").to_string(),
+                        date_fin: ee_date.format("%Y-%m-%d").to_string(),
+                        nature: SlotNature::Essayage,
+                        reference_id: Some(eid),
+                        reference_code: Some(enum_code.clone()),
+                        description: format!("Essayage cabine ({})", enum_code),
+                        client_nom: c_name,
+                    });
+                }
+            }
+        }
+
         // Trier les créneaux par ordre chronologique
         slots.sort_by(|a, b| a.date_debut.cmp(&b.date_debut));
+
 
         result.push(VariantAvailabilityMatrixRow {
             variante_id: var_id,

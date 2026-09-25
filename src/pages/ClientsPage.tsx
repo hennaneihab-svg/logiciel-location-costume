@@ -10,8 +10,14 @@ import {
   Filter,
   DollarSign,
   UserCheck,
+  Ruler,
+  SlidersHorizontal,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { formatCents } from "@/lib/utils";
+
 import {
   useClientStore,
   getClientTotalSpentCents,
@@ -44,6 +50,59 @@ export const ClientsPage: React.FC = () => {
     const t = setTimeout(() => setIsLoading(false), 900);
     return () => clearTimeout(t);
   }, []);
+
+  // Filtre multicritères mensurations (MOD-2)
+  const [isMensurationDrawerOpen, setIsMensurationDrawerOpen] = useState(false);
+  const [minPoitrine, setMinPoitrine] = useState("");
+  const [maxPoitrine, setMaxPoitrine] = useState("");
+  const [minTaille, setMinTaille] = useState("");
+  const [maxTaille, setMaxTaille] = useState("");
+  const [minHanches, setMinHanches] = useState("");
+  const [maxHanches, setMaxHanches] = useState("");
+  const [minStature, setMinStature] = useState("");
+  const [maxStature, setMaxStature] = useState("");
+  const [minPointure, setMinPointure] = useState("");
+  const [maxPointure, setMaxPointure] = useState("");
+  const [matchedClientIds, setMatchedClientIds] = useState<Set<string> | null>(null);
+
+  const hasActiveMensurationFilters = Boolean(
+    minPoitrine || maxPoitrine || minTaille || maxTaille ||
+    minHanches || maxHanches || minStature || maxStature ||
+    minPointure || maxPointure
+  );
+
+  useEffect(() => {
+    if (!hasActiveMensurationFilters) {
+      setMatchedClientIds(null);
+      return;
+    }
+
+    const filters = {
+      min_tour_poitrine: minPoitrine ? parseFloat(minPoitrine) : null,
+      max_tour_poitrine: maxPoitrine ? parseFloat(maxPoitrine) : null,
+      min_tour_taille: minTaille ? parseFloat(minTaille) : null,
+      max_tour_taille: maxTaille ? parseFloat(maxTaille) : null,
+      min_tour_hanches: minHanches ? parseFloat(minHanches) : null,
+      max_tour_hanches: maxHanches ? parseFloat(maxHanches) : null,
+      min_stature: minStature ? parseFloat(minStature) : null,
+      max_stature: maxStature ? parseFloat(maxStature) : null,
+      min_pointure: minPointure ? parseFloat(minPointure) : null,
+      max_pointure: maxPointure ? parseFloat(maxPointure) : null,
+    };
+
+    invoke<Array<{ id: string }>>("search_clients_by_mensurations", { filters })
+      .then((res) => {
+        setMatchedClientIds(new Set(res.map((r) => r.id)));
+      })
+      .catch((err) => {
+        console.warn("Recherche mensurations non dispo :", err);
+      });
+  }, [
+    minPoitrine, maxPoitrine, minTaille, maxTaille,
+    minHanches, maxHanches, minStature, maxStature,
+    minPointure, maxPointure, hasActiveMensurationFilters
+  ]);
+
 
   // Statistiques globales de la clientèle
   const stats = useMemo(() => {
@@ -114,8 +173,14 @@ export const ClientsPage: React.FC = () => {
           if (!hasActive) return false;
         }
 
+        // 2b. Filtre multicritères par mensurations (MOD-2)
+        if (matchedClientIds !== null && !matchedClientIds.has(client.id)) {
+          return false;
+        }
+
         return true;
       })
+
       .sort((a, b) => {
         // 3. Tri
         if (sortBy === "spent_desc") {
@@ -301,8 +366,173 @@ export const ClientsPage: React.FC = () => {
               {tab.label}
             </button>
           ))}
+
+          {/* Bouton bascule Filtre Mensurations (MOD-2) */}
+          <button
+            type="button"
+            onClick={() => setIsMensurationDrawerOpen(!isMensurationDrawerOpen)}
+            className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors border flex items-center gap-1.5 ml-auto ${
+              hasActiveMensurationFilters
+                ? "bg-status-fitting text-white border-status-fitting shadow-xs"
+                : isMensurationDrawerOpen
+                ? "bg-secondary text-foreground border-primary"
+                : "bg-secondary/40 text-muted-foreground hover:text-foreground border-border hover:bg-secondary"
+            }`}
+          >
+            <Ruler className="w-3.5 h-3.5" />
+            <span>Filtres mensurations</span>
+            {hasActiveMensurationFilters && (
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            )}
+            {isMensurationDrawerOpen ? (
+              <ChevronUp className="w-3.5 h-3.5" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5" />
+            )}
+          </button>
         </div>
+
+        {/* Tiroir déroulant Filtre Mensurations */}
+        {isMensurationDrawerOpen && (
+          <div className="pt-3 border-t border-border/70 space-y-3 animate-in fade-in">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-primary flex items-center gap-1.5">
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span>Recherche multicritères par mensurations atelier (en cm)</span>
+              </span>
+
+              {hasActiveMensurationFilters && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMinPoitrine("");
+                    setMaxPoitrine("");
+                    setMinTaille("");
+                    setMaxTaille("");
+                    setMinHanches("");
+                    setMaxHanches("");
+                    setMinStature("");
+                    setMaxStature("");
+                    setMinPointure("");
+                    setMaxPointure("");
+                  }}
+                  className="text-[11px] text-destructive hover:underline font-semibold"
+                >
+                  Réinitialiser critères
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+              <div className="space-y-1">
+                <label className="text-[11px] text-muted-foreground block font-medium">Poitrine (cm)</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    placeholder="Min"
+                    value={minPoitrine}
+                    onChange={(e) => setMinPoitrine(e.target.value)}
+                    className="w-full h-7 px-2 rounded-md bg-secondary/50 border border-border text-xs text-foreground"
+                  />
+                  <span className="text-muted-foreground">-</span>
+                  <input
+                    type="number"
+                    placeholder="Max"
+                    value={maxPoitrine}
+                    onChange={(e) => setMaxPoitrine(e.target.value)}
+                    className="w-full h-7 px-2 rounded-md bg-secondary/50 border border-border text-xs text-foreground"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] text-muted-foreground block font-medium">Taille (cm)</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    placeholder="Min"
+                    value={minTaille}
+                    onChange={(e) => setMinTaille(e.target.value)}
+                    className="w-full h-7 px-2 rounded-md bg-secondary/50 border border-border text-xs text-foreground"
+                  />
+                  <span className="text-muted-foreground">-</span>
+                  <input
+                    type="number"
+                    placeholder="Max"
+                    value={maxTaille}
+                    onChange={(e) => setMaxTaille(e.target.value)}
+                    className="w-full h-7 px-2 rounded-md bg-secondary/50 border border-border text-xs text-foreground"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] text-muted-foreground block font-medium">Hanches (cm)</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    placeholder="Min"
+                    value={minHanches}
+                    onChange={(e) => setMinHanches(e.target.value)}
+                    className="w-full h-7 px-2 rounded-md bg-secondary/50 border border-border text-xs text-foreground"
+                  />
+                  <span className="text-muted-foreground">-</span>
+                  <input
+                    type="number"
+                    placeholder="Max"
+                    value={maxHanches}
+                    onChange={(e) => setMaxHanches(e.target.value)}
+                    className="w-full h-7 px-2 rounded-md bg-secondary/50 border border-border text-xs text-foreground"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] text-muted-foreground block font-medium">Stature (cm)</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    placeholder="Min"
+                    value={minStature}
+                    onChange={(e) => setMinStature(e.target.value)}
+                    className="w-full h-7 px-2 rounded-md bg-secondary/50 border border-border text-xs text-foreground"
+                  />
+                  <span className="text-muted-foreground">-</span>
+                  <input
+                    type="number"
+                    placeholder="Max"
+                    value={maxStature}
+                    onChange={(e) => setMaxStature(e.target.value)}
+                    className="w-full h-7 px-2 rounded-md bg-secondary/50 border border-border text-xs text-foreground"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] text-muted-foreground block font-medium">Pointure</label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    placeholder="Min"
+                    value={minPointure}
+                    onChange={(e) => setMinPointure(e.target.value)}
+                    className="w-full h-7 px-2 rounded-md bg-secondary/50 border border-border text-xs text-foreground"
+                  />
+                  <span className="text-muted-foreground">-</span>
+                  <input
+                    type="number"
+                    placeholder="Max"
+                    value={maxPointure}
+                    onChange={(e) => setMaxPointure(e.target.value)}
+                    className="w-full h-7 px-2 rounded-md bg-secondary/50 border border-border text-xs text-foreground"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
 
       {/* Grille des Cartes Clients ou Skeletons */}
       {isLoading ? (

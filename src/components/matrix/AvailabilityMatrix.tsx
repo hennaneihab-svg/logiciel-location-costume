@@ -9,6 +9,7 @@ import {
   Clock,
   Shirt,
   Move,
+  Scissors,
 } from "lucide-react";
 import {
   useMatrixStore,
@@ -20,12 +21,15 @@ import { useStockStore } from "@/store/stockStore";
 import { toast } from "sonner";
 import { ContractQuickDetailModal } from "./ContractQuickDetailModal";
 import { RescheduleConfirmModal } from "./RescheduleConfirmModal";
+import { EssaiCabineModal } from "./EssaiCabineModal";
 import type {
   AvailabilitySlot,
   SlotNature,
   VariantAvailabilityMatrixRow,
   PendingRescheduleProposal,
+  EssaiCabineDetailDto,
 } from "@/types/matrix";
+
 
 export const AvailabilityMatrix: React.FC = () => {
   const {
@@ -79,6 +83,17 @@ export const AvailabilityMatrix: React.FC = () => {
 
   // État modal de détail contrat (clic simple)
   const [inspectedContractRef, setInspectedContractRef] = useState<string | null>(null);
+
+  // État modal essayage cabine (MOD-3)
+  const [essaiModal, setEssaiModal] = useState<{
+    isOpen: boolean;
+    varianteId?: string;
+    articleNom?: string;
+    articleRef?: string;
+    taille?: string;
+    activeEssai?: EssaiCabineDetailDto | null;
+  }>({ isOpen: false });
+
 
   // État Drag and Drop
   const [draggingSlot, setDraggingSlot] = useState<{
@@ -184,23 +199,58 @@ export const AvailabilityMatrix: React.FC = () => {
           badge: "bg-status-late text-white font-bold",
           label: "Retard",
         };
+      case "essayage":
+        return {
+          bg: "bg-status-fitting-bg text-status-fitting border-status-fitting-border hover:opacity-90",
+          badge: "bg-status-fitting text-white font-bold",
+          label: "Essayage",
+        };
     }
   };
+
 
   // Trouver le créneau actif pour une variante et un jour donné
   const findSlotForDate = (row: VariantAvailabilityMatrixRow, dateIso: string): AvailabilitySlot | undefined => {
     return row.slots.find((s) => dateIso >= s.date_debut && dateIso <= s.date_fin);
   };
 
-  const handleCellClick = (slot?: AvailabilitySlot) => {
+  const handleCellClick = (slot?: AvailabilitySlot, row?: VariantAvailabilityMatrixRow) => {
     if (!slot) return;
     if (slot.nature === "location" || slot.nature === "retard") {
       const ref = slot.reference_code || slot.reference_id;
       if (ref) {
         setInspectedContractRef(ref);
       }
+    } else if (slot.nature === "essayage" && row) {
+      setEssaiModal({
+        isOpen: true,
+        varianteId: row.variante_id,
+        articleNom: row.article_nom,
+        articleRef: row.reference,
+        taille: row.taille,
+        activeEssai: {
+          id: slot.reference_id || "",
+          numero_essai: slot.reference_code || "ESS",
+          variante_id: row.variante_id,
+          article_id: row.article_id,
+          article_nom: row.article_nom,
+          article_reference: row.reference,
+          taille: row.taille,
+          client_id: null,
+          client_nom: slot.client_nom,
+          date_debut: slot.date_debut,
+          date_fin_prevue: slot.date_fin,
+          date_fin_effective: null,
+          statut: "en_cours",
+          resultat: null,
+          pressing_envoi_id: null,
+          notes: slot.description,
+          created_at: "",
+        },
+      });
     }
   };
+
 
   // ============================================================================
   // GESTION DU DRAG AND DROP (C1, C2, C3)
@@ -434,12 +484,17 @@ export const AvailabilityMatrix: React.FC = () => {
             <span className="w-2 h-2 rounded-full bg-status-late animate-ping" />
             <span className="font-semibold">Retard</span>
           </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-status-fitting-bg text-status-fitting border border-status-fitting-border">
+            <span className="w-2 h-2 rounded-full bg-status-fitting" />
+            <span className="font-semibold">Essayage cabine</span>
+          </div>
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-status-completed-bg text-status-completed border border-status-completed-border">
             <span className="w-2 h-2 rounded-full bg-status-completed" />
             <span className="font-semibold">Disponible</span>
           </div>
         </div>
       </div>
+
 
       {/* 2. Filtres (Recherche, Catégories, Articles) & Pagination */}
       <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between p-3 rounded-xl bg-card border border-border shadow-xs">
@@ -588,8 +643,27 @@ export const AvailabilityMatrix: React.FC = () => {
                   <tr key={row.variante_id} className="hover:bg-secondary/20 transition-colors">
                     {/* Colonne fixe Variante */}
                     <td className="sticky left-0 z-10 bg-card/95 backdrop-blur-xs p-2.5 border-r border-border max-w-[260px]">
-                      <div className="font-semibold text-foreground truncate text-xs" title={row.article_nom}>
-                        {row.article_nom}
+                      <div className="flex items-center justify-between gap-1">
+                        <div className="font-semibold text-foreground truncate text-xs flex-1" title={row.article_nom}>
+                          {row.article_nom}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEssaiModal({
+                              isOpen: true,
+                              varianteId: row.variante_id,
+                              articleNom: row.article_nom,
+                              articleRef: row.reference,
+                              taille: row.taille,
+                              activeEssai: null,
+                            })
+                          }
+                          title="Mettre en cabine d'essayage"
+                          className="p-1 rounded-md text-muted-foreground hover:text-status-fitting hover:bg-status-fitting-bg/60 transition-colors"
+                        >
+                          <Scissors className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                       <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5">
                         <span className="font-mono font-medium text-foreground">{row.reference}</span>
@@ -602,6 +676,7 @@ export const AvailabilityMatrix: React.FC = () => {
                         )}
                       </div>
                     </td>
+
 
                     {/* 30 Cellules de jours */}
                     {daysList.map((d) => {
@@ -641,14 +716,15 @@ export const AvailabilityMatrix: React.FC = () => {
                       }
 
                       const style = getSlotStyle(slot.nature);
-                      const isClickable = slot.nature === "location" || slot.nature === "retard";
+                      const isClickable = slot.nature === "location" || slot.nature === "retard" || slot.nature === "essayage";
                       const isDraggable = slot.nature === "location";
 
                       return (
                         <td
                           key={d.iso}
                           data-testid={`cell-${row.variante_id}-${d.iso}`}
-                          onClick={() => handleCellClick(slot)}
+                          onClick={() => handleCellClick(slot, row)}
+
                           onDragOver={(e) => handleDragOver(e, row, d.iso)}
                           onDragLeave={handleDragLeave}
                           onDrop={(e) => handleDrop(e, row, d.iso)}
@@ -690,9 +766,12 @@ export const AvailabilityMatrix: React.FC = () => {
                                 <span>
                                   {slot.nature === "pressing"
                                     ? "PRS"
+                                    : slot.nature === "essayage"
+                                    ? "ESS"
                                     : slot.reference_code
                                     ? slot.reference_code.replace("LOC-2026-", "#")
                                     : "LOC"}
+
                                 </span>
                               </span>
                             )}
@@ -806,6 +885,24 @@ export const AvailabilityMatrix: React.FC = () => {
           onCancel={handleCancelReschedule}
         />
       )}
+
+      {/* 8. Modal Essayage en cabine (MOD-3) */}
+      {essaiModal.isOpen && (
+        <EssaiCabineModal
+          isOpen={essaiModal.isOpen}
+          onClose={() => setEssaiModal({ isOpen: false })}
+          varianteId={essaiModal.varianteId}
+          articleNom={essaiModal.articleNom}
+          articleRef={essaiModal.articleRef}
+          taille={essaiModal.taille}
+          activeEssai={essaiModal.activeEssai}
+          onSuccess={() => {
+            loadMatrix();
+            toast.success("Disponibilités mises à jour suite à l'essayage.");
+          }}
+        />
+      )}
     </div>
   );
 };
+

@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
-import { X, UserPlus, Upload, Trash2, CreditCard } from "lucide-react";
+import { X, UserPlus, Upload, Trash2, CreditCard, Ruler } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { useClientStore } from "@/store/clientStore";
 import { toast } from "sonner";
 import type { CustomerDetailed } from "@/types/customer";
@@ -26,6 +27,17 @@ export const QuickCreateClientModal: React.FC<QuickCreateClientModalProps> = ({
     undefined
   );
   const [notes, setNotes] = useState("");
+
+  // MOD-2 : Mensurations structurées
+  const [tourPoitrine, setTourPoitrine] = useState("");
+  const [tourTaille, setTourTaille] = useState("");
+  const [tourHanches, setTourHanches] = useState("");
+  const [stature, setStature] = useState("");
+  const [longueurBras, setLongueurBras] = useState("");
+  const [longueurJambe, setLongueurJambe] = useState("");
+  const [tourCou, setTourCou] = useState("");
+  const [pointure, setPointure] = useState("");
+
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -59,6 +71,14 @@ export const QuickCreateClientModal: React.FC<QuickCreateClientModalProps> = ({
     setIdentityCardNumber("");
     setIdentityCardPhoto(undefined);
     setNotes("");
+    setTourPoitrine("");
+    setTourTaille("");
+    setTourHanches("");
+    setStature("");
+    setLongueurBras("");
+    setLongueurJambe("");
+    setTourCou("");
+    setPointure("");
   };
 
   const handleClose = () => {
@@ -66,7 +86,7 @@ export const QuickCreateClientModal: React.FC<QuickCreateClientModalProps> = ({
     setCreateModalOpen(false);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!lastName.trim() || !firstName.trim()) {
@@ -94,6 +114,32 @@ export const QuickCreateClientModal: React.FC<QuickCreateClientModalProps> = ({
       is_blacklisted: false,
     });
 
+    // Sauvegarde structurée des mensurations si au moins une valeur est saisie
+    const hasMeasurements =
+      tourPoitrine || tourTaille || tourHanches || stature ||
+      longueurBras || longueurJambe || tourCou || pointure;
+
+    if (hasMeasurements) {
+      try {
+        await invoke("create_client_mensurations", {
+          clientId: created.id,
+          dto: {
+            tour_poitrine: tourPoitrine ? parseFloat(tourPoitrine) : null,
+            tour_taille: tourTaille ? parseFloat(tourTaille) : null,
+            tour_hanches: tourHanches ? parseFloat(tourHanches) : null,
+            stature: stature ? parseFloat(stature) : null,
+            longueur_bras: longueurBras ? parseFloat(longueurBras) : null,
+            longueur_jambe: longueurJambe ? parseFloat(longueurJambe) : null,
+            tour_cou: tourCou ? parseFloat(tourCou) : null,
+            pointure: pointure ? parseFloat(pointure) : null,
+            notes_mensurations: notes.trim() || null,
+          },
+        });
+      } catch (err) {
+        console.warn("Enregistrement mensurations ignoré ou en mode hors-tauri :", err);
+      }
+    }
+
     toast.success(
       `Client "${created.first_name} ${created.last_name}" enregistré avec succès !`
     );
@@ -104,6 +150,7 @@ export const QuickCreateClientModal: React.FC<QuickCreateClientModalProps> = ({
 
     handleClose();
   };
+
 
   return (
     <div
@@ -320,19 +367,141 @@ export const QuickCreateClientModal: React.FC<QuickCreateClientModalProps> = ({
             </div>
           </div>
 
-          {/* Section 3 : Mensurations & Préférences sartoriales */}
-          <div className="space-y-2 pt-4 border-t border-border">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-primary">
-              3. Mensurations & Notes Sartoriales
-            </h4>
-            <textarea
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Ex : Veste taille 50 Drop 7, pantalon taille 42 sans pince, pointure 43, chemise col cassé 40..."
-              className="w-full p-2.5 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary leading-relaxed"
-            />
+          {/* Section 3 : Mensurations structurées & Préférences sartoriales (MOD-2) */}
+          <div className="space-y-3 pt-4 border-t border-border">
+            <div className="flex items-center gap-1.5">
+              <Ruler className="w-4 h-4 text-primary" />
+              <h4 className="text-xs font-bold uppercase tracking-wider text-primary">
+                3. Mensurations Structurées (en cm)
+              </h4>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div>
+                <label className="text-[11px] text-muted-foreground block mb-1">Poitrine (cm)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="50"
+                  max="160"
+                  value={tourPoitrine}
+                  onChange={(e) => setTourPoitrine(e.target.value)}
+                  placeholder="Ex: 88"
+                  className="w-full h-8 px-2.5 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-muted-foreground block mb-1">Taille (cm)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="40"
+                  max="150"
+                  value={tourTaille}
+                  onChange={(e) => setTourTaille(e.target.value)}
+                  placeholder="Ex: 68"
+                  className="w-full h-8 px-2.5 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-muted-foreground block mb-1">Hanches (cm)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="60"
+                  max="170"
+                  value={tourHanches}
+                  onChange={(e) => setTourHanches(e.target.value)}
+                  placeholder="Ex: 94"
+                  className="w-full h-8 px-2.5 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-muted-foreground block mb-1">Stature (cm)</label>
+                <input
+                  type="number"
+                  step="1"
+                  min="120"
+                  max="220"
+                  value={stature}
+                  onChange={(e) => setStature(e.target.value)}
+                  placeholder="Ex: 172"
+                  className="w-full h-8 px-2.5 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-muted-foreground block mb-1">Longueur bras (cm)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="30"
+                  max="90"
+                  value={longueurBras}
+                  onChange={(e) => setLongueurBras(e.target.value)}
+                  placeholder="Ex: 60"
+                  className="w-full h-8 px-2.5 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-muted-foreground block mb-1">Longueur jambe (cm)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="50"
+                  max="130"
+                  value={longueurJambe}
+                  onChange={(e) => setLongueurJambe(e.target.value)}
+                  placeholder="Ex: 102"
+                  className="w-full h-8 px-2.5 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-muted-foreground block mb-1">Tour de cou (cm)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="25"
+                  max="60"
+                  value={tourCou}
+                  onChange={(e) => setTourCou(e.target.value)}
+                  placeholder="Ex: 36"
+                  className="w-full h-8 px-2.5 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:ring-1 focus:ring-primary"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-muted-foreground block mb-1">Pointure</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="32"
+                  max="52"
+                  value={pointure}
+                  onChange={(e) => setPointure(e.target.value)}
+                  placeholder="Ex: 38.5"
+                  className="w-full h-8 px-2.5 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[11px] text-muted-foreground block mb-1">Notes et préférences sartoriales libres</label>
+              <textarea
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Ex : Préfère les coupes cintrées, longueur cheville avec talons, événement gala..."
+                className="w-full p-2.5 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary leading-relaxed"
+              />
+            </div>
           </div>
+
 
           {/* Footer boutons */}
           <div className="pt-4 border-t border-border flex items-center justify-end gap-3 shrink-0">

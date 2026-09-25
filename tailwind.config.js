@@ -108,7 +108,11 @@ export default {
           success: "var(--status-success)",
           "success-bg": "var(--status-success-bg)",
           "success-border": "var(--status-success-border)",
+          fitting: "var(--status-fitting)",
+          "fitting-bg": "var(--status-fitting-bg)",
+          "fitting-border": "var(--status-fitting-border)",
         },
+
         // Thème prestige doré (conservé pour rétrocompatibilité)
         gold: {
           50: "#fdfbf7",

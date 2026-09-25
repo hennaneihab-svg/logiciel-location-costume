@@ -752,3 +752,121 @@ pub struct StockInventoryRowDto {
     pub cout_pressing_total_centimes: i64,
 }
 
+// ============================================================================
+// MOD-2: MENSURATIONS CLIENT STRUCTURÉES
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ClientMensurations {
+    pub id: String,
+    pub client_id: String,
+    pub tour_poitrine: Option<f64>,
+    pub tour_taille: Option<f64>,
+    pub tour_hanches: Option<f64>,
+    pub longueur_bras: Option<f64>,
+    pub longueur_jambe: Option<f64>,
+    pub tour_cou: Option<f64>,
+    pub pointure: Option<f64>,
+    pub stature: Option<f64>,
+    pub notes_mensurations: Option<String>,
+    pub date_mesure: String,
+    pub est_actuel: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateMensurationsDto {
+    pub tour_poitrine: Option<f64>,
+    pub tour_taille: Option<f64>,
+    pub tour_hanches: Option<f64>,
+    pub longueur_bras: Option<f64>,
+    pub longueur_jambe: Option<f64>,
+    pub tour_cou: Option<f64>,
+    pub pointure: Option<f64>,
+    pub stature: Option<f64>,
+    pub notes_mensurations: Option<String>,
+    pub date_mesure: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct MensurationSearchFilterDto {
+    pub min_tour_poitrine: Option<f64>,
+    pub max_tour_poitrine: Option<f64>,
+    pub min_tour_taille: Option<f64>,
+    pub max_tour_taille: Option<f64>,
+    pub min_tour_hanches: Option<f64>,
+    pub max_tour_hanches: Option<f64>,
+    pub min_stature: Option<f64>,
+    pub max_stature: Option<f64>,
+    pub min_pointure: Option<f64>,
+    pub max_pointure: Option<f64>,
+}
+
+// ============================================================================
+// MOD-3: ÉTAPE ESSAYAGE EN CABINE
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct EssaiCabine {
+    pub id: String,
+    pub numero_essai: String,
+    pub variante_id: String,
+    pub client_id: Option<String>,
+    pub client_nom_libre: Option<String>,
+    pub date_debut: String,
+    pub date_fin_prevue: String,
+    pub date_fin_effective: Option<String>,
+    pub statut: String,
+    pub resultat: Option<String>,
+    pub pressing_envoi_id: Option<String>,
+    pub notes: Option<String>,
+    pub utilisateur_id: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EssaiCabineDetailDto {
+    pub id: String,
+    pub numero_essai: String,
+    pub variante_id: String,
+    pub article_id: String,
+    pub article_nom: String,
+    pub article_reference: String,
+    pub taille: String,
+    pub client_id: Option<String>,
+    pub client_nom: Option<String>,
+    pub date_debut: String,
+    pub date_fin_prevue: String,
+    pub date_fin_effective: Option<String>,
+    pub statut: String,
+    pub resultat: Option<String>,
+    pub pressing_envoi_id: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateEssaiCabineDto {
+    pub variante_id: String,
+    pub client_id: Option<String>,
+    pub client_nom_libre: Option<String>,
+    pub date_debut: Option<String>,
+    pub date_fin_prevue: Option<String>,
+    pub notes: Option<String>,
+    pub utilisateur_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FinishEssaiCabineDto {
+    pub essai_id: String,
+    pub resultat: String, // 'convient', 'retouche_necessaire', 'refuse'
+    pub notes: Option<String>,
+    pub envoyer_retouche: Option<bool>,
+    pub retouche_motif: Option<String>,
+    pub retouche_prestataire_id: Option<String>,
+    pub retouche_date_retour_prevue: Option<String>,
+    pub retouche_cout_centimes: Option<i64>,
+}
+
+

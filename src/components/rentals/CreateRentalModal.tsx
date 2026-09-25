@@ -12,7 +12,9 @@ import {
   Eye,
   Package,
   Trash2,
+  Ruler,
 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { formatCents, eurosToCents } from "@/lib/utils";
 import { useRentalStore } from "@/store/rentalStore";
 import { useClientStore } from "@/store/clientStore";
@@ -23,7 +25,8 @@ import { QrCameraScanner } from "@/components/common/QrCameraScanner";
 import { PackReservationModal } from "@/components/packs/PackReservationModal";
 import { photoService } from "@/services/photoService";
 import { toast } from "sonner";
-import type { CustomerDetailed } from "@/types/customer";
+import type { CustomerDetailed, ClientMensurations } from "@/types/customer";
+
 import type { StockArticle, StockVariant } from "@/types/stock";
 import type { PackLineInput, ReservedLine } from "@/types/pack";
 
@@ -41,6 +44,18 @@ export const CreateRentalModal: React.FC = () => {
   // Étape 1 : Client
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [clientSearch, setClientSearch] = useState("");
+  const [clientMensurations, setClientMensurations] = useState<ClientMensurations | null>(null);
+
+  useEffect(() => {
+    if (selectedCustomerId) {
+      invoke<ClientMensurations | null>("get_client_mensurations_active", { clientId: selectedCustomerId })
+        .then(setClientMensurations)
+        .catch(() => setClientMensurations(null));
+    } else {
+      setClientMensurations(null);
+    }
+  }, [selectedCustomerId]);
+
 
   // Étape 2 : Dates
   const [pickupDate, setPickupDate] = useState("2026-09-14");
@@ -433,7 +448,7 @@ export const CreateRentalModal: React.FC = () => {
               </div>
 
               {selectedClient && (
-                <div className="p-2.5 rounded-lg bg-background border border-border text-[11px] space-y-0.5">
+                <div className="p-2.5 rounded-lg bg-background border border-border text-[11px] space-y-1">
                   <div className="font-bold text-foreground">
                     Client retenu : {selectedClient.first_name}{" "}
                     {selectedClient.last_name}
@@ -442,8 +457,22 @@ export const CreateRentalModal: React.FC = () => {
                     Tél : {selectedClient.phone} • N° CNI :{" "}
                     {selectedClient.identity_card_number || "Vérifiée au comptoir"}
                   </div>
+                  {clientMensurations && (
+                    <div className="pt-1 mt-1 border-t border-border/60 flex items-center gap-1.5 text-primary text-[10px] font-medium flex-wrap">
+                      <Ruler className="w-3 h-3 shrink-0" />
+                      <span>
+                        Mesures :
+                        {clientMensurations.tour_poitrine ? ` Poitrine ${clientMensurations.tour_poitrine}cm •` : ""}
+                        {clientMensurations.tour_taille ? ` Taille ${clientMensurations.tour_taille}cm •` : ""}
+                        {clientMensurations.tour_hanches ? ` Hanches ${clientMensurations.tour_hanches}cm •` : ""}
+                        {clientMensurations.stature ? ` Stature ${clientMensurations.stature}cm •` : ""}
+                        {clientMensurations.pointure ? ` Pointure ${clientMensurations.pointure}` : ""}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
+
             </div>
 
             {/* Colonne 2 : Dates */}

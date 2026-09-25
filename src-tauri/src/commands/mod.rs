@@ -12,6 +12,10 @@ pub use settings::*;
 pub mod matrix;
 pub use matrix::*;
 
+pub mod mensurations_essais;
+pub use mensurations_essais::*;
+
+
 // ============================================================================
 // COMMANDES IPC CRUD AVEC VALIDATION RUST
 // ============================================================================
