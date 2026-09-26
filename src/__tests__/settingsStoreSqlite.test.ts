@@ -66,8 +66,6 @@ describe("D2 — settingsStore migration vers SQLite & zéro écriture localStor
       }),
       fiscalite: JSON.stringify({
         default_vat_rate: 0.19,
-        currency: "DZD",
-        currency_symbol: "DA",
       }),
       backups: "[]",
       audit_logs: "[]",

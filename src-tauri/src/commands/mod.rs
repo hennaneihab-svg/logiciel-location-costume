@@ -570,6 +570,121 @@ pub async fn list_rentals(state: State<'_, DbState>) -> Result<Vec<RentalContrac
     Ok(list)
 }
 
+pub async fn execute_list_rentals_paginated(
+    pool: &sqlx::SqlitePool,
+    page: Option<i64>,
+    page_size: Option<i64>,
+    status_filter: Option<String>,
+    search: Option<String>,
+) -> Result<PaginatedRentalsDto, AppError> {
+    let p = page.unwrap_or(1).max(1);
+    let ps = page_size.unwrap_or(20).clamp(1, 100);
+    let offset = (p - 1) * ps;
+
+    let mut conditions = Vec::new();
+    let mut param_status: Option<String> = None;
+    let mut param_search: Option<String> = None;
+
+    if let Some(ref st) = status_filter {
+        let trimmed = st.trim();
+        if !trimmed.is_empty() && trimmed != "all" {
+            conditions.push("l.statut = ?");
+            param_status = Some(trimmed.to_string());
+        }
+    }
+
+    if let Some(ref q) = search {
+        let trimmed = q.trim();
+        if !trimmed.is_empty() {
+            conditions.push("(l.numero_location LIKE ? OR c.nom LIKE ? OR c.prenom LIKE ? OR (c.prenom || ' ' || c.nom) LIKE ? OR c.telephone LIKE ? OR EXISTS (SELECT 1 FROM lignes_location ll LEFT JOIN articles a ON COALESCE(ll.article_id, (SELECT article_id FROM variantes_stock WHERE id = ll.variante_id)) = a.id LEFT JOIN variantes_stock vs ON ll.variante_id = vs.id WHERE ll.location_id = l.id AND (a.nom LIKE ? OR vs.code_barre LIKE ?)))");
+            param_search = Some(format!("%{}%", trimmed));
+        }
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    // 1. Compte total
+    let count_sql = format!(
+        "SELECT COUNT(DISTINCT l.id) FROM locations l JOIN clients c ON l.client_id = c.id {}",
+        where_clause
+    );
+
+    let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql);
+    if let Some(ref st) = param_status {
+        count_query = count_query.bind(st);
+    }
+    if let Some(ref s) = param_search {
+        count_query = count_query
+            .bind(s)
+            .bind(s)
+            .bind(s)
+            .bind(s)
+            .bind(s)
+            .bind(s)
+            .bind(s);
+    }
+
+    let (total,) = count_query.fetch_one(pool).await.map_err(AppError::DatabaseError)?;
+    let total_pages = if total == 0 {
+        1
+    } else {
+        ((total as f64) / (ps as f64)).ceil() as i64
+    };
+
+    // 2. Récupération des IDs paginés
+    let list_sql = format!(
+        "SELECT l.id FROM locations l JOIN clients c ON l.client_id = c.id {} ORDER BY l.date_retrait_prevue DESC LIMIT ? OFFSET ?",
+        where_clause
+    );
+
+    let mut list_query = sqlx::query_as::<_, (String,)>(&list_sql);
+    if let Some(ref st) = param_status {
+        list_query = list_query.bind(st);
+    }
+    if let Some(ref s) = param_search {
+        list_query = list_query
+            .bind(s)
+            .bind(s)
+            .bind(s)
+            .bind(s)
+            .bind(s)
+            .bind(s)
+            .bind(s);
+    }
+    list_query = list_query.bind(ps).bind(offset);
+
+    let ids = list_query.fetch_all(pool).await.map_err(AppError::DatabaseError)?;
+
+    let mut items = Vec::with_capacity(ids.len());
+    for (id,) in ids {
+        let dto = fetch_rental_dto_by_id(pool, &id).await?;
+        items.push(dto);
+    }
+
+    Ok(PaginatedRentalsDto {
+        items,
+        total,
+        page: p,
+        page_size: ps,
+        total_pages,
+    })
+}
+
+#[command]
+pub async fn list_rentals_paginated(
+    page: Option<i64>,
+    page_size: Option<i64>,
+    status_filter: Option<String>,
+    search: Option<String>,
+    state: State<'_, DbState>,
+) -> Result<PaginatedRentalsDto, AppError> {
+    execute_list_rentals_paginated(&state.pool, page, page_size, status_filter, search).await
+}
+
 #[command]
 pub async fn get_rental(id: String, state: State<'_, DbState>) -> Result<RentalContractDto, AppError> {
     fetch_rental_dto_by_id(&state.pool, &id).await

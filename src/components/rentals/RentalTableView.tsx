@@ -11,6 +11,8 @@ import {
   CreditCard,
   PackageCheck,
   Loader2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { useRentalStore } from "@/store/rentalStore";
@@ -33,6 +35,10 @@ export const RentalTableView: React.FC = () => {
     setPdfPreviewModalOpen,
     setReturnModalOpen,
     validatePickup,
+    currentPage,
+    pageSize,
+    setCurrentPage,
+    setPageSize,
   } = useRentalStore();
 
   const logAuditEvent = useSettingsStore((s) => s.logAuditEvent);
@@ -162,6 +168,19 @@ export const RentalTableView: React.FC = () => {
     });
   }, [contracts, activeFilter, searchQuery]);
 
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [activeFilter, searchQuery, setCurrentPage]);
+
+  const totalItems = filteredContracts.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+
+  const displayedContracts = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredContracts.slice(start, start + pageSize);
+  }, [filteredContracts, safePage, pageSize]);
+
   return (
     <div className="space-y-4">
       {/* Barre de Recherche & Filtres */}
@@ -225,7 +244,7 @@ export const RentalTableView: React.FC = () => {
                 </td>
               </tr>
             ) : (
-              filteredContracts.map((contract) => {
+              displayedContracts.map((contract) => {
                 const badge = getStatusBadge(contract.status);
                 const Icon = badge.icon;
                 const canReturn =
@@ -402,6 +421,85 @@ export const RentalTableView: React.FC = () => {
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Barre de pagination */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 rounded-xl bg-card border border-border shadow-sm text-xs text-muted-foreground">
+        <div>
+          Page <span className="font-semibold text-foreground">{safePage}</span> sur{" "}
+          <span className="font-semibold text-foreground">{totalPages}</span> —{" "}
+          <span className="font-semibold text-foreground">{totalItems}</span> contrat{totalItems > 1 ? "s" : ""}
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span>Afficher :</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+              }}
+              className="h-8 px-2 rounded-lg bg-secondary/50 border border-border text-foreground font-medium focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
+            <span>par page</span>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setCurrentPage(Math.max(1, safePage - 1))}
+              disabled={safePage <= 1}
+              className="p-1.5 rounded-lg border border-border hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-foreground cursor-pointer"
+              title="Page précédente"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            {Array.from({ length: totalPages }, (_, i) => i + 1)
+              .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1)
+              .reduce<(number | string)[]>((acc, p, idx, arr) => {
+                if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) {
+                  acc.push("...");
+                }
+                acc.push(p);
+                return acc;
+              }, [])
+              .map((item, idx) =>
+                typeof item === "string" ? (
+                  <span key={`dots-${idx}`} className="px-1 text-muted-foreground">
+                    ...
+                  </span>
+                ) : (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setCurrentPage(item)}
+                    className={`w-7 h-7 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                      safePage === item
+                        ? "bg-primary text-primary-foreground shadow-xs"
+                        : "border border-border hover:bg-secondary text-foreground"
+                    }`}
+                  >
+                    {item}
+                  </button>
+                )
+              )}
+
+            <button
+              type="button"
+              onClick={() => setCurrentPage(Math.min(totalPages, safePage + 1))}
+              disabled={safePage >= totalPages}
+              className="p-1.5 rounded-lg border border-border hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-foreground cursor-pointer"
+              title="Page suivante"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </div>
 
       {paymentModalContract && (

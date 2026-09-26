@@ -4,6 +4,7 @@ import type {
   RentalContractStatus,
   NewRentalFormInput,
   RentalArticleItem,
+  PaginatedRentalsResult,
 } from "@/types/rental";
 import { useStockStore } from "@/store/stockStore";
 import { useClientStore } from "@/store/clientStore";
@@ -20,6 +21,21 @@ interface RentalStoreState {
   selectedContractForReturn: RentalContract | null;
   activeFilter: "all" | "en_cours" | "reserve" | "en_retard" | "retourne";
   searchQuery: string;
+
+  // Pagination
+  currentPage: number;
+  pageSize: number;
+  totalContracts: number;
+  totalPages: number;
+  paginatedContracts: RentalContract[];
+  setCurrentPage: (page: number) => void;
+  setPageSize: (pageSize: number) => void;
+  loadContractsPaginated: (
+    page?: number,
+    pageSize?: number,
+    statusFilter?: string,
+    search?: string
+  ) => Promise<PaginatedRentalsResult | void>;
 
   // Modals
   isCreateRentalModalOpen: boolean;
@@ -359,6 +375,44 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
   selectedContractForReturn: null,
   activeFilter: "all",
   searchQuery: "",
+
+  // Pagination state
+  currentPage: 1,
+  pageSize: 10,
+  totalContracts: INITIAL_CONTRACTS.length,
+  totalPages: Math.ceil(INITIAL_CONTRACTS.length / 10),
+  paginatedContracts: [],
+  setCurrentPage: (page) => set({ currentPage: page }),
+  setPageSize: (pageSize) =>
+    set((state) => ({
+      pageSize,
+      currentPage: 1,
+      totalPages: Math.max(1, Math.ceil(state.totalContracts / pageSize)),
+    })),
+  loadContractsPaginated: async (page = 1, pageSize = 10, statusFilter, search) => {
+    if (isTauri()) {
+      try {
+        const res = await invokeCommand<PaginatedRentalsResult>("list_rentals_paginated", {
+          page,
+          pageSize,
+          statusFilter: statusFilter || null,
+          search: search || null,
+        });
+        if (res) {
+          set({
+            paginatedContracts: res.items,
+            totalContracts: res.total,
+            currentPage: res.page,
+            pageSize: res.page_size,
+            totalPages: res.total_pages,
+          });
+          return res;
+        }
+      } catch (err) {
+        console.error("[rentalStore] Erreur list_rentals_paginated:", err);
+      }
+    }
+  },
 
   loadContracts: async () => {
     set({ isLoading: true });

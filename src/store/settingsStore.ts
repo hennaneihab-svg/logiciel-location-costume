@@ -75,8 +75,6 @@ const INITIAL_NUMBERING: NumberingSettings = {
 
 const INITIAL_TAX: TaxSettings = {
   default_vat_rate: 0.19, // 19% TVA algérienne
-  currency: "DZD",
-  currency_symbol: "DA",
 };
 
 // 5 sauvegardes récentes pré-générées pour simuler l'historique

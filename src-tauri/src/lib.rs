@@ -42,6 +42,7 @@ pub fn run() {
             commands::get_location,
             commands::update_location_statut,
             commands::list_rentals,
+            commands::list_rentals_paginated,
             commands::get_rental,
             commands::create_rental,
             commands::validate_rental_pickup,

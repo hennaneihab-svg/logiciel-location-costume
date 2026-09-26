@@ -1048,5 +1048,65 @@ async fn test_contract_created_today_stays_reserved_until_validate_rental_pickup
     let _ = fs::remove_dir_all(&test_dir);
 }
 
+#[tokio::test]
+async fn test_list_rentals_paginated_returns_correct_subset_and_total() {
+    let test_dir = std::env::temp_dir().join(format!("test_rental_paginated_{}", chrono::Utc::now().timestamp_micros()));
+    fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+    let pool = db::init_db(&test_dir).await.expect("Failed to init db");
+
+    // 1. Test pagination de base (page 1, taille 5 sur les 15 contrats seedés)
+    let page1 = execute_list_rentals_paginated(&pool, Some(1), Some(5), None, None)
+        .await
+        .expect("list_rentals_paginated page 1 failed");
+
+    assert_eq!(page1.total, 15, "Le total doit être de 15 contrats");
+    assert_eq!(page1.page, 1);
+    assert_eq!(page1.page_size, 5);
+    assert_eq!(page1.total_pages, 3, "15 contrats avec page_size=5 donnent 3 pages");
+    assert_eq!(page1.items.len(), 5, "La page 1 doit contenir exactement 5 contrats");
+
+    // 2. Test page 2 (aucun chevauchement d'identifiants avec page 1)
+    let page2 = execute_list_rentals_paginated(&pool, Some(2), Some(5), None, None)
+        .await
+        .expect("list_rentals_paginated page 2 failed");
+
+    assert_eq!(page2.items.len(), 5);
+    let page1_ids: Vec<String> = page1.items.iter().map(|c| c.id.clone()).collect();
+    for item in &page2.items {
+        assert!(
+            !page1_ids.contains(&item.id),
+            "L'élément {} de la page 2 ne doit pas figurer dans la page 1",
+            item.id
+        );
+    }
+
+    // 3. Test avec filtre statut 'en_cours'
+    let count_en_cours: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM locations WHERE statut = 'en_cours'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let page_status = execute_list_rentals_paginated(&pool, Some(1), Some(20), Some("en_cours".to_string()), None)
+        .await
+        .expect("list_rentals_paginated avec filtre statut failed");
+
+    assert_eq!(page_status.total, count_en_cours.0);
+    for item in &page_status.items {
+        assert_eq!(item.status, "en_cours", "Tous les contrats retournés doivent avoir le statut 'en_cours'");
+    }
+
+    // 4. Test avec recherche textuelle
+    let search_res = execute_list_rentals_paginated(&pool, Some(1), Some(10), None, Some("LOC-2026-0001".to_string()))
+        .await
+        .expect("list_rentals_paginated avec recherche failed");
+
+    assert_eq!(search_res.total, 1, "Un seul contrat correspond à LOC-2026-0001");
+    assert_eq!(search_res.items[0].contract_number, "LOC-2026-0001");
+
+    pool.close().await;
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
 
 

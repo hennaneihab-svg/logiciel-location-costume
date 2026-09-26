@@ -27,8 +27,6 @@ export interface NumberingSettings {
 
 export interface TaxSettings {
   default_vat_rate: number; // Ex: 0.19 (19% TVA algérienne)
-  currency: string; // "DZD"
-  currency_symbol: string; // "DA"
 }
 
 export interface BackupEntry {

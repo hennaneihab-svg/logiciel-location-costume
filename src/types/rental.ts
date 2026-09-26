@@ -105,3 +105,12 @@ export interface ValidateRentalPickupInput {
   notes?: string;
 }
 
+export interface PaginatedRentalsResult {
+  items: RentalContract[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+

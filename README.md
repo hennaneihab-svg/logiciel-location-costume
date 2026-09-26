@@ -1,4 +1,4 @@
-﻿# Atelier Prestige — Gestion de Location Costumes & Chaussures d'Événement
+# Atelier Prestige — Gestion de Location Costumes & Chaussures d'Événement
 
 Application Desktop complète et moderne conçue avec **Tauri 2 (Rust)** et **React 18 + TypeScript + TailwindCSS + shadcn/ui**. Développée pour la gestion haut de gamme de boutiques de cérémonie et événementiel.
 
@@ -143,6 +143,12 @@ Les packages d'installation seront créés dans :
 ├── PROJECT_CONTEXT.md         # Spécification et règles architecturales
 └── package.json
 ```
+
+---
+
+## Documentation Complémentaire & Guides
+
+- **Guide AppLocker & Redémarrage (MOD-6)** : Consulter [`docs/APPLOCKER_AND_RESTART_GUIDE.md`](docs/APPLOCKER_AND_RESTART_GUIDE.md) pour les détails sur la compatibilité AppLocker/WDAC, les contournements en environnement de développement local et le protocole de vérification PID de `restart_app`.
 
 ---
 

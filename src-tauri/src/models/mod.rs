@@ -256,6 +256,15 @@ pub struct RentalContractDto {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginatedRentalsDto {
+    pub items: Vec<RentalContractDto>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+    pub total_pages: i64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct RentalQuantityItemInput {
     pub article_id: String,
