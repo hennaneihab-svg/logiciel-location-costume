@@ -12,6 +12,7 @@ import type {
 } from "@/types/pressing";
 import { useAuthStore } from "./authStore";
 import { useStockStore } from "./stockStore";
+import { logger } from "@/lib/logger";
 
 interface PressingStoreState {
   providers: PressingProvider[];
@@ -64,7 +65,7 @@ export const usePressingStore = create<PressingStoreState>((set, get) => ({
         set({ isModuleActive: active });
         return active;
       } catch (err) {
-        console.error("Erreur chargement statut module pressing:", err);
+        logger.error("pressingStore: Erreur chargement statut module pressing", err);
       }
     }
     return get().isModuleActive;
@@ -75,7 +76,7 @@ export const usePressingStore = create<PressingStoreState>((set, get) => ({
       try {
         await invokeCommand("set_pressing_module_active", { actif: active });
       } catch (err) {
-        console.error("Erreur sauvegarde statut module pressing:", err);
+        logger.error("pressingStore: Erreur sauvegarde statut module pressing", err);
         toast.error("Impossible de modifier l'état du module pressing.");
         return;
       }
@@ -94,7 +95,7 @@ export const usePressingStore = create<PressingStoreState>((set, get) => ({
         set({ providers: list });
       }
     } catch (err) {
-      console.error("Erreur chargement prestataires:", err);
+      logger.error("pressingStore: Erreur chargement prestataires", err);
       toast.error("Impossible de charger les prestataires de pressing.");
     } finally {
       set({ isLoading: false });
@@ -129,7 +130,7 @@ export const usePressingStore = create<PressingStoreState>((set, get) => ({
         return mock;
       }
     } catch (err: any) {
-      console.error("Erreur création prestataire:", err);
+      logger.error("pressingStore: Erreur création prestataire", err);
       toast.error(err.message || "Erreur lors de la création du prestataire.");
       throw err;
     } finally {
@@ -162,7 +163,7 @@ export const usePressingStore = create<PressingStoreState>((set, get) => ({
         return updated;
       }
     } catch (err: any) {
-      console.error("Erreur modification prestataire:", err);
+      logger.error("pressingStore: Erreur modification prestataire", err);
       toast.error(err.message || "Erreur lors de la modification du prestataire.");
       throw err;
     } finally {
@@ -214,7 +215,7 @@ export const usePressingStore = create<PressingStoreState>((set, get) => ({
         set({ dispatches: list });
       }
     } catch (err) {
-      console.error("Erreur chargement envois pressing:", err);
+      logger.error("pressingStore: Erreur chargement envois pressing", err);
       toast.error("Impossible de charger les envois de pressing.");
     } finally {
       set({ isLoading: false });
@@ -326,7 +327,7 @@ export const usePressingStore = create<PressingStoreState>((set, get) => ({
         };
       }
     } catch (err: any) {
-      console.error("Erreur création envoi pressing:", err);
+      logger.error("pressingStore: Erreur création envoi pressing", err);
       toast.error(err.message || "Erreur lors de l'envoi au pressing.");
       throw err;
     } finally {
@@ -456,7 +457,7 @@ export const usePressingStore = create<PressingStoreState>((set, get) => ({
           varianteId,
         });
       } catch (err) {
-        console.error("Erreur historique pressing variante:", err);
+        logger.error("pressingStore: Erreur historique pressing variante", err);
       }
     }
     return get().dispatches.filter((d) => d.variante_id === varianteId);

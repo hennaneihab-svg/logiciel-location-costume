@@ -18,6 +18,7 @@ import { useCaisseStore, AVAILABLE_CASHIERS } from "@/store/caisseStore";
 import { formatCents } from "@/lib/utils";
 import { generateCloturePdf } from "@/services/receiptPdfService";
 import { toast } from "sonner";
+import { logger } from "@/lib/logger";
 
 export const ClotureCaisseView: React.FC = () => {
   const {
@@ -71,11 +72,11 @@ export const ClotureCaisseView: React.FC = () => {
         res.print();
         setIsPrinting(false);
       } catch (err) {
-        console.error(err);
+        logger.error("ClotureCaisseView: Erreur impression clôture", err);
         setIsPrinting(false);
       }
     } catch (err: any) {
-      console.error(err);
+      logger.error("ClotureCaisseView: Erreur clôture caisse", err);
       toast.error(err?.message || "Erreur lors de la clôture de la caisse");
     }
   };
@@ -88,7 +89,7 @@ export const ClotureCaisseView: React.FC = () => {
       setIsPrinting(false);
       toast.success("Impression du Ticket Z lancée");
     } catch (err) {
-      console.error(err);
+      logger.error("ClotureCaisseView: Erreur impression rapport Z", err);
       setIsPrinting(false);
       toast.error("Erreur lors de la génération du rapport");
     }
@@ -100,7 +101,7 @@ export const ClotureCaisseView: React.FC = () => {
       res.download();
       toast.success("Rapport Z téléchargé");
     } catch (err) {
-      console.error(err);
+      logger.error("ClotureCaisseView: Erreur téléchargement rapport Z", err);
       toast.error("Erreur téléchargement");
     }
   };

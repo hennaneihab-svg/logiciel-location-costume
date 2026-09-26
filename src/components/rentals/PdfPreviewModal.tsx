@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   X,
   Printer,
@@ -14,6 +14,7 @@ import {
   type GeneratedPdfResult,
 } from "@/services/pdfService";
 import { toast } from "sonner";
+import { logger } from "@/lib/logger";
 
 export const PdfPreviewModal: React.FC = () => {
   const { isPdfPreviewModalOpen, selectedContractForPdf, setPdfPreviewModalOpen } =
@@ -32,7 +33,7 @@ export const PdfPreviewModal: React.FC = () => {
           setLoading(false);
         })
         .catch((err) => {
-          console.error(err);
+          logger.error("PdfPreviewModal: Erreur génération PDF contrat", err);
           toast.error("Erreur lors de la génération du PDF.");
           setLoading(false);
         });

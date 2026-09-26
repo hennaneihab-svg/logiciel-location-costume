@@ -4,6 +4,7 @@ import { formatCents } from "@/lib/utils";
 import { useRentalStore } from "@/store/rentalStore";
 import type { RentalContract } from "@/types/rental";
 import { toast } from "sonner";
+import { logger } from "@/lib/logger";
 
 interface RentalPaymentModalProps {
   contract: RentalContract | null;
@@ -65,7 +66,7 @@ export const RentalPaymentModal: React.FC<RentalPaymentModalProps> = ({
       }
       onClose();
     } catch (err: any) {
-      console.error(err);
+      logger.error("RentalPaymentModal: Erreur enregistrement paiement", err);
       toast.error(err?.message || "Erreur lors de l'enregistrement du paiement.");
     } finally {
       setIsSubmitting(false);

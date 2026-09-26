@@ -6,6 +6,7 @@ import type { StockArticle, StockVariant } from "@/types/stock";
 import { toast } from "sonner";
 import { validateImageFile, processArticleImage } from "@/lib/imageProcessor";
 import { photoService } from "@/services/photoService";
+import { logger } from "@/lib/logger";
 
 export const CreateEditArticleModal: React.FC = () => {
   const { isCreateModalOpen, setCreateModalOpen, addArticle } = useStockStore();
@@ -63,7 +64,7 @@ export const CreateEditArticleModal: React.FC = () => {
       setPhotoPreview(`data:${processed.mime};base64,${processed.thumbBase64}`);
       toast.success("Photo importée et optimisée avec succès");
     } catch (err) {
-      console.error(err);
+      logger.error("CreateEditArticleModal: Erreur optimisation photo", err);
       toast.error("Erreur lors de l'optimisation de la photo");
     }
   };
@@ -218,7 +219,7 @@ export const CreateEditArticleModal: React.FC = () => {
         mime: processedPhotoData.mime,
         data_base64: processedPhotoData.dataBase64,
         thumb_base64: processedPhotoData.thumbBase64,
-      }).catch((err) => console.warn("Erreur sauvegarde SQLite photo:", err));
+      }).catch((err) => logger.warn("CreateEditArticleModal: Erreur sauvegarde SQLite photo", err));
     }
 
     toast.success(`Article "${newArticle.name}" créé avec ${generatedVariants.length} exemplaire(s) en stock !`);

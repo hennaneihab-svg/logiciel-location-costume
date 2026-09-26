@@ -28,6 +28,7 @@ import {
 } from "@/services/reportService";
 import { formatDA } from "@/lib/utils";
 import { toast } from "sonner";
+import { logger } from "@/lib/logger";
 
 export const RapportsPage: React.FC = () => {
   const [period, setPeriod] = useState<ReportPeriod>("mois");
@@ -59,7 +60,7 @@ export const RapportsPage: React.FC = () => {
       setTransactions(txData);
       setInventoryRows(stockData);
     } catch (err) {
-      console.error(err);
+      logger.error("RapportsPage: Erreur chargement données rapports", err);
       toast.error("Erreur lors du chargement des données de rapports");
     } finally {
       setIsLoading(false);
@@ -83,7 +84,7 @@ export const RapportsPage: React.FC = () => {
       await exportFinancialReportPdf(overview, transactions);
       toast.success("Rapport financier PDF exporté");
     } catch (err) {
-      console.error(err);
+      logger.error("RapportsPage: Erreur export PDF financier", err);
       toast.error("Erreur lors de l'export PDF");
     }
   };
@@ -94,7 +95,7 @@ export const RapportsPage: React.FC = () => {
       exportFinancialReportCsv(overview, transactions);
       toast.success("Rapport financier CSV exporté");
     } catch (err) {
-      console.error(err);
+      logger.error("RapportsPage: Erreur export CSV financier", err);
       toast.error("Erreur lors de l'export CSV");
     }
   };
@@ -105,7 +106,7 @@ export const RapportsPage: React.FC = () => {
       exportCaisseJournalCsv(overview, transactions);
       toast.success("Journal de caisse CSV exporté");
     } catch (err) {
-      console.error(err);
+      logger.error("RapportsPage: Erreur export CSV caisse", err);
       toast.error("Erreur lors de l'export CSV");
     }
   };
@@ -115,7 +116,7 @@ export const RapportsPage: React.FC = () => {
       exportStockInventoryCsv(inventoryRows);
       toast.success("Inventaire de valorisation CSV exporté");
     } catch (err) {
-      console.error(err);
+      logger.error("RapportsPage: Erreur export CSV stock", err);
       toast.error("Erreur lors de l'export CSV");
     }
   };
