@@ -276,7 +276,7 @@ async fn test_finish_essai_cabine_retouche_necessaire_creates_pressing_envoi_wit
     assert_eq!(var_statut.0, "en_retouche");
 
     // 4. Vérifier l'envoi créé dans pressing_envois avec les données fournies (sans ressaisie)
-    let p_row = sqlx::query("SELECT type_traitement, statut, date_retour_prevue, cout_centimes, notes FROM pressing_envois WHERE id = ?")
+    let p_row = sqlx::query("SELECT type_traitement, statut, date_retour_prevue, cout_centimes, motif, notes FROM pressing_envois WHERE id = ?")
         .bind(finished.pressing_envoi_id.as_ref().unwrap())
         .fetch_one(&pool)
         .await
@@ -285,12 +285,14 @@ async fn test_finish_essai_cabine_retouche_necessaire_creates_pressing_envoi_wit
     let t_type: String = p_row.get("type_traitement");
     let p_stat: String = p_row.get("statut");
     let p_cout: i64 = p_row.get("cout_centimes");
+    let p_motif: Option<String> = p_row.get("motif");
     let p_notes: Option<String> = p_row.get("notes");
 
     assert_eq!(t_type, "retouche");
     assert_eq!(p_stat, "envoye");
     assert_eq!(p_cout, 1500);
-    assert!(p_notes.unwrap_or_default().contains("Ourlet 3cm"));
+    assert!(p_motif.unwrap_or_default().contains("Ourlet 3cm"));
+    assert!(p_notes.unwrap_or_default().contains("Ourlet"));
 
     pool.close().await;
     let _ = fs::remove_dir_all(&test_dir);
