@@ -19,6 +19,7 @@ import type {
 import { ALERT_URGENCY } from "@/types/alert";
 import { CATEGORY_LABELS } from "@/store/alertStore.constants";
 import { dbStorage } from "@/services/dbStorage";
+import { isTauri } from "@/services/tauri";
 
 export { CATEGORY_LABELS };
 
@@ -288,7 +289,9 @@ function sortByUrgency(a: AppAlert, b: AppAlert): number {
 
 // ─── Store Zustand ────────────────────────────────────────────────────────────
 export const useAlertStore = create<AlertStoreState>((set, get) => ({
-  alerts: dbStorage.load<AppAlert[]>(dbStorage.KEYS.ALERTS, STOCK_SEED_ALERTS),
+  alerts: isTauri()
+    ? []
+    : dbStorage.load<AppAlert[]>(dbStorage.KEYS.ALERTS, STOCK_SEED_ALERTS),
   filters: DEFAULT_FILTERS,
   isDismissDialogOpen: false,
   alertToDismiss: null,

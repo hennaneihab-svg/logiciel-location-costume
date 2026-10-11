@@ -119,6 +119,11 @@ pub fn run() {
             commands::finish_essai_cabine,
             commands::cancel_essai_cabine,
             commands::list_essais_cabine,
+            // LOT ONBOARDING & SEED
+            commands::check_setup_required,
+            commands::complete_initial_setup,
+            commands::list_auth_users,
+            commands::seed_demo_data,
         ])
 
         .run(tauri::generate_context!())

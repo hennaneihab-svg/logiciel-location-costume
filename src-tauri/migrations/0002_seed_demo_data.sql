@@ -164,3 +164,16 @@ INSERT OR IGNORE INTO alertes (id, location_id, client_id, type_alerte, date_ech
 ('alt-001', 'loc-011', 'cli-006', 'retard', '2026-09-12T18:00:00.000Z', 1, '2026-09-13T09:00:00.000Z', 0, '2026-09-08T11:30:00.000Z'),
 ('alt-002', 'loc-012', 'cli-005', 'jour_j', '2026-09-14T19:00:00.000Z', 1, '2026-09-14T08:00:00.000Z', 0, '2026-09-11T16:30:00.000Z'),
 ('alt-003', 'loc-013', 'cli-001', 'j_minus_1', '2026-09-15T18:00:00.000Z', 1, '2026-09-14T08:00:00.000Z', 0, '2026-09-11T14:20:00.000Z');
+
+-- Packs de démonstration
+INSERT OR IGNORE INTO packs (id, nom, cible, prix_forfait_centimes, est_actif, created_at, updated_at) VALUES
+('pack-marie-01', 'Pack Marié Prestige Cérémonie', 'homme', 28000, 1, '2026-09-17T10:00:00.000Z', '2026-09-17T10:00:00.000Z'),
+('pack-cocktail-02', 'Pack Soirée Cocktail & Gala', 'homme', 22000, 1, '2026-09-17T10:00:00.000Z', '2026-09-17T10:00:00.000Z');
+
+INSERT OR IGNORE INTO pack_items (id, pack_id, categorie_id, article_id, quantite, obligatoire) VALUES
+('pitem-001', 'pack-marie-01', 'cat-01', NULL, 1, 1),
+('pitem-002', 'pack-marie-01', 'cat-04', NULL, 1, 1),
+('pitem-003', 'pack-marie-01', 'cat-06', 'art-018', 1, 1),
+('pitem-004', 'pack-marie-01', 'cat-06', 'art-019', 1, 1),
+('pitem-005', 'pack-cocktail-02', 'cat-01', NULL, 1, 1),
+('pitem-006', 'pack-cocktail-02', 'cat-06', 'art-018', 1, 1);

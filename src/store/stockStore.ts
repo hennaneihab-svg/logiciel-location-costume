@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { StockArticle, StockVariant, StatusLog } from "@/types/stock";
 import { dbStorage } from "@/services/dbStorage";
+import { isTauri } from "@/services/tauri";
 
 interface StockFilterState {
   search: string;
@@ -510,7 +511,9 @@ const INITIAL_ARTICLES: StockArticle[] = [
 ];
 
 export const useStockStore = create<StockStore>((set, get) => ({
-  articles: dbStorage.load<StockArticle[]>(dbStorage.KEYS.ARTICLES, INITIAL_ARTICLES),
+  articles: isTauri()
+    ? []
+    : dbStorage.load<StockArticle[]>(dbStorage.KEYS.ARTICLES, INITIAL_ARTICLES),
   filters: {
     search: "",
     category: "all",

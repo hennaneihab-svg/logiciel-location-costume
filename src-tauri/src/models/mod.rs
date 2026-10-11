@@ -878,4 +878,25 @@ pub struct FinishEssaiCabineDto {
     pub retouche_cout_centimes: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InitialSetupInput {
+    pub admin_username: String,
+    pub admin_full_name: String,
+    pub admin_password_hash: String,
+    pub boutique_name: String,
+    pub boutique_address: String,
+    pub boutique_phone: String,
+    pub activity_type: String, // "homme", "femme", "mixte"
+}
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthUserDto {
+    pub id: String,
+    pub username: String,
+    pub full_name: String,
+    pub role: String,
+    pub is_active: bool,
+    pub password_hash: String,
+    pub created_at: String,
+    pub last_login: Option<String>,
+}

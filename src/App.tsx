@@ -11,14 +11,18 @@ import { RapportsPage } from "./pages/RapportsPage";
 import { AlertesPage } from "./pages/AlertesPage";
 import { ParametresPage } from "./pages/ParametresPage";
 import { LoginPage } from "./pages/LoginPage";
+import { SetupWizardPage } from "./pages/SetupWizardPage";
 import { PressingPage } from "./components/pressing/PressingPage";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 import { useAlertEngine } from "./hooks/useAlertEngine";
 import { useAppInit } from "./hooks/useAppInit";
+import { useAuthStore } from "./store/authStore";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 
 export const App: React.FC = () => {
   const { status, error, retry } = useAppInit();
+  // Lecture réactive : si isSetupRequired change après checkSetupRequired(), ce composant se re-rend
+  const isSetupRequired = useAuthStore((s) => s.isSetupRequired);
 
   // Lance le moteur d'alertes au démarrage et toutes les heures
   useAlertEngine();
@@ -57,6 +61,16 @@ export const App: React.FC = () => {
           <span>Réessayer</span>
         </button>
       </div>
+    );
+  }
+
+  // Premier lancement sur base vierge : afficher l'assistant de configuration avant tout
+  if (isSetupRequired) {
+    return (
+      <>
+        <Toaster position="top-right" richColors />
+        <SetupWizardPage />
+      </>
     );
   }
 

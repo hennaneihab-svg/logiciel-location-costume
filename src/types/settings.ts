@@ -15,6 +15,7 @@ export interface BoutiqueSettings {
   website: string;
   logo_url?: string;
   legal_notice: string;
+  activity_type?: "homme" | "femme" | "mixte";
 }
 
 export interface NumberingSettings {

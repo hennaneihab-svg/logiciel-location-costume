@@ -5,6 +5,7 @@ import type {
   ClientFilterOption,
 } from "@/types/customer";
 import { dbStorage } from "@/services/dbStorage";
+import { isTauri } from "@/services/tauri";
 
 interface ClientStoreState {
   clients: CustomerDetailed[];
@@ -580,7 +581,9 @@ const INITIAL_CLIENTS: CustomerDetailed[] = [
 ];
 
 export const useClientStore = create<ClientStoreState>((set, get) => ({
-  clients: dbStorage.load<CustomerDetailed[]>(dbStorage.KEYS.CLIENTS, INITIAL_CLIENTS),
+  clients: isTauri()
+    ? []
+    : dbStorage.load<CustomerDetailed[]>(dbStorage.KEYS.CLIENTS, INITIAL_CLIENTS),
   search: "",
   sortBy: "spent_desc",
   filter: "all",

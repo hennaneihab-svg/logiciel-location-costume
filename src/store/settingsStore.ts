@@ -63,6 +63,7 @@ const INITIAL_BOUTIQUE: BoutiqueSettings = {
   website: "www.atelierprestige.dz",
   logo_url: "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=200&auto=format&fit=crop&q=80",
   legal_notice: "TVA algérienne à 19% applicable selon la législation fiscale en vigueur.",
+  activity_type: "homme",
 };
 
 const INITIAL_NUMBERING: NumberingSettings = {

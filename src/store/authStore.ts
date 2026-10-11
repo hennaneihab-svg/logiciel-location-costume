@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import bcrypt from "bcryptjs";
 import type { AuthUser, AuthCredentials, AuthPermissions } from "@/types/auth";
+import { isTauri, invokeCommand } from "@/services/tauri";
+import { useSettingsStore } from "@/store/settingsStore";
+import { logger } from "@/lib/logger";
 
 // Mots de passe hashés avec bcrypt (salt rounds = 10)
 // admin123 -> $2a$10$0zB2b5Mv4nQzD.K9bZq3be0c8Z5UoK2x3W7/6jH3nK1e9Gq1r2y7y (exemples validés)
@@ -30,10 +33,21 @@ export const INITIAL_USERS: AuthUser[] = [
   },
 ];
 
+export interface InitialSetupData {
+  adminUsername: string;
+  adminFullName: string;
+  adminPassword: string;
+  boutiqueName: string;
+  boutiqueAddress: string;
+  boutiquePhone: string;
+  activityType: "homme" | "femme" | "mixte";
+}
+
 interface AuthStoreState {
   users: AuthUser[];
   currentUser: AuthUser | null;
   isAuthenticated: boolean;
+  isSetupRequired: boolean;
   inactivityTimeoutMinutes: number; // Durée configurable en minutes (0 = désactivé)
 
   // Actions
@@ -42,6 +56,9 @@ interface AuthStoreState {
   switchUserRole: (role: "admin" | "vendeur") => void; // Raccourci rapide pour tests
   setInactivityTimeoutMinutes: (minutes: number) => void;
   touchActivity: () => void;
+  checkSetupRequired: () => Promise<boolean>;
+  loadUsers: () => Promise<void>;
+  completeSetup: (data: InitialSetupData) => Promise<{ success: boolean; error?: string }>;
 
   // Permissions calculées
   getPermissions: () => AuthPermissions;
@@ -54,7 +71,114 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
   // Par défaut, l'application démarre DÉCONNECTÉE pour la sécurité
   currentUser: null,
   isAuthenticated: false,
+  isSetupRequired: false,
   inactivityTimeoutMinutes: 15, // 15 minutes par défaut sur poste partagé
+
+  checkSetupRequired: async () => {
+    if (isTauri()) {
+      try {
+        const required = await invokeCommand<boolean>("check_setup_required");
+        set({ isSetupRequired: required });
+        if (!required) {
+          await get().loadUsers();
+        } else {
+          set({ users: [] });
+        }
+        return required;
+      } catch (err) {
+        logger.error("useAuthStore: Erreur check_setup_required", err);
+        return false;
+      }
+    }
+    // Mode Web / Vitest fallback
+    const required = get().users.length === 0;
+    set({ isSetupRequired: required });
+    return required;
+  },
+
+  loadUsers: async () => {
+    if (isTauri()) {
+      try {
+        const users = await invokeCommand<AuthUser[]>("list_auth_users");
+        if (users && users.length > 0) {
+          set({ users });
+        }
+      } catch (err) {
+        logger.error("useAuthStore: Erreur chargement utilisateurs depuis SQLite", err);
+      }
+    }
+  },
+
+  completeSetup: async (data: InitialSetupData) => {
+    // 1. Validation des contraintes de sécurité minimales
+    if (!data.adminUsername || data.adminUsername.trim().length === 0) {
+      return { success: false, error: "L'identifiant administrateur est requis." };
+    }
+    if (!data.adminPassword || data.adminPassword.length < 8) {
+      return { success: false, error: "Le mot de passe doit contenir au moins 8 caractères." };
+    }
+    if (!data.boutiqueName || data.boutiqueName.trim().length === 0) {
+      return { success: false, error: "Le nom de la boutique est requis." };
+    }
+
+    const passwordHash = bcrypt.hashSync(data.adminPassword, 10);
+    const now = new Date().toISOString();
+    const newAdminUser: AuthUser = {
+      id: `usr-admin-${Date.now()}`,
+      username: data.adminUsername.trim(),
+      full_name: data.adminFullName.trim() || "Administrateur",
+      role: "admin",
+      is_active: true,
+      password_hash: passwordHash,
+      created_at: now,
+      last_login: now,
+    };
+
+    if (isTauri()) {
+      try {
+        await invokeCommand("complete_initial_setup", {
+          dto: {
+            admin_username: data.adminUsername.trim(),
+            admin_full_name: data.adminFullName.trim(),
+            admin_password_hash: passwordHash,
+            boutique_name: data.boutiqueName.trim(),
+            boutique_address: data.boutiqueAddress.trim(),
+            boutique_phone: data.boutiquePhone.trim(),
+            activity_type: data.activityType,
+          },
+        });
+      } catch (err: any) {
+        return { success: false, error: err?.message || "Échec de l'enregistrement de la configuration initiale." };
+      }
+    }
+
+    // Mise à jour de l'état local
+    set({
+      users: [newAdminUser],
+      currentUser: newAdminUser,
+      isAuthenticated: true,
+      isSetupRequired: false,
+    });
+
+    // Nettoyage complet du localStorage et réinitialisation des stores pour base 100% vierge
+    if (typeof window !== "undefined" && window.localStorage) {
+      localStorage.removeItem("atelier_prestige_db_articles");
+      localStorage.removeItem("atelier_prestige_db_clients");
+      localStorage.removeItem("atelier_prestige_db_contracts");
+      localStorage.removeItem("atelier_prestige_db_sales");
+      localStorage.removeItem("atelier_prestige_db_alerts");
+      localStorage.removeItem("atelier_prestige_db_packs");
+    }
+
+    useSettingsStore.getState().updateBoutiqueSettings({
+      name: data.boutiqueName.trim(),
+      address: data.boutiqueAddress.trim(),
+      phone: data.boutiquePhone.trim(),
+      activity_type: data.activityType,
+    });
+
+    return { success: true };
+  },
 
   login: ({ username, password }) => {
     const { users } = get();

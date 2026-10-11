@@ -1,4 +1,4 @@
-﻿import { create } from "zustand";
+import { create } from "zustand";
 import type { PackWithItems, ReservePackInput, ReservedLine } from "@/types/pack";
 import { invokeCommand, isTauri } from "@/services/tauri";
 import { toast } from "sonner";
@@ -52,7 +52,7 @@ interface PackStoreState {
 }
 
 export const usePackStore = create<PackStoreState>((set, get) => ({
-  packs: INITIAL_PACKS,
+  packs: isTauri() ? [] : INITIAL_PACKS,
   selectedPack: null,
   isLoading: false,
   isModalOpen: false,

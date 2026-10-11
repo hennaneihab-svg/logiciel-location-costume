@@ -7,13 +7,17 @@ import { toast } from "sonner";
 import { validateImageFile, processArticleImage } from "@/lib/imageProcessor";
 import { photoService } from "@/services/photoService";
 import { logger } from "@/lib/logger";
+import { useSettingsStore } from "@/store/settingsStore";
+import { getCategoriesForActivity } from "@/lib/activityCategories";
 
 export const CreateEditArticleModal: React.FC = () => {
   const { isCreateModalOpen, setCreateModalOpen, addArticle } = useStockStore();
+  const boutique = useSettingsStore((s) => s.boutique);
+  const availableCategories = getCategoriesForActivity(boutique.activity_type);
 
   const [name, setName] = useState("");
   const [brand, setBrand] = useState("");
-  const [category, setCategory] = useState("cat-01");
+  const [category, setCategory] = useState(availableCategories[0]?.id || "cat-01");
   const [reference, setReference] = useState("");
   const [color, setColor] = useState("");
   const [description, setDescription] = useState("");
@@ -177,19 +181,15 @@ export const CreateEditArticleModal: React.FC = () => {
       }
     });
 
-    const categoryNames: Record<string, string> = {
-      "cat-01": "Smokings Cérémonie",
-      "cat-02": "Costumes 3 Pièces",
-      "cat-03": "Costumes 2 Pièces",
-      "cat-04": "Chaussures Richelieu",
-      "cat-05": "Chaussures Derbies",
-      "cat-06": "Accessoires Prestige",
-    };
+    const categoryNames: Record<string, string> = {};
+    availableCategories.forEach((c) => {
+      categoryNames[c.id] = c.label;
+    });
 
     const newArticle: StockArticle = {
       id: `art-${Date.now()}`,
       category_id: category,
-      category_name: categoryNames[category] || "Costume",
+      category_name: categoryNames[category] || availableCategories[0]?.label || "Article",
       reference: cleanRef,
       name: name.trim(),
       brand: brand.trim() || "Atelier Prestige",
@@ -304,12 +304,11 @@ export const CreateEditArticleModal: React.FC = () => {
                   onChange={(e) => setCategory(e.target.value)}
                   className="w-full h-9 px-3 rounded-lg bg-secondary/50 border border-border text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 >
-                  <option value="cat-01">Smokings Cérémonie</option>
-                  <option value="cat-02">Costumes 3 Pièces</option>
-                  <option value="cat-03">Costumes 2 Pièces</option>
-                  <option value="cat-04">Chaussures Richelieu</option>
-                  <option value="cat-05">Chaussures Derbies</option>
-                  <option value="cat-06">Accessoires Prestige</option>
+                  {availableCategories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 

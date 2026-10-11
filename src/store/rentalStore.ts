@@ -368,8 +368,12 @@ const INITIAL_CONTRACTS: RentalContract[] = [
   },
 ];
 
+// En mode Tauri, on démarre avec un tableau vide — loadContracts() charge depuis SQLite.
+// En mode web/Vitest, INITIAL_CONTRACTS sert de fallback pour les tests.
+const CONTRACTS_INIT = isTauri() ? [] : INITIAL_CONTRACTS;
+
 export const useRentalStore = create<RentalStoreState>((set, get) => ({
-  contracts: INITIAL_CONTRACTS,
+  contracts: CONTRACTS_INIT,
   isLoading: false,
   selectedContractForPdf: null,
   selectedContractForReturn: null,
@@ -379,8 +383,8 @@ export const useRentalStore = create<RentalStoreState>((set, get) => ({
   // Pagination state
   currentPage: 1,
   pageSize: 10,
-  totalContracts: INITIAL_CONTRACTS.length,
-  totalPages: Math.ceil(INITIAL_CONTRACTS.length / 10),
+  totalContracts: CONTRACTS_INIT.length,
+  totalPages: Math.max(1, Math.ceil(CONTRACTS_INIT.length / 10)),
   paginatedContracts: [],
   setCurrentPage: (page) => set({ currentPage: page }),
   setPageSize: (pageSize) =>

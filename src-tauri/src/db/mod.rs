@@ -94,29 +94,26 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
             .map_err(AppError::DatabaseError)?;
     }
 
-    // Migration 0002 (Seed)
-    let row2: Option<(i64,)> = sqlx::query_as("SELECT version FROM _migrations WHERE version = 2")
-        .fetch_optional(pool)
-        .await
-        .map_err(AppError::DatabaseError)?;
+    // Migration 0002 (Seed de démonstration - isolée, non exécutée par défaut sur une installation client)
+    let is_virgin_requested = std::env::var("TEST_VIRGIN_DB")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
 
-    if row2.is_none() {
-        for statement in MIGRATION_0002.split(';') {
-            let stmt = statement.trim();
-            if !stmt.is_empty() {
-                sqlx::query(stmt)
-                    .execute(pool)
-                    .await
-                    .map_err(AppError::DatabaseError)?;
-            }
-        }
+    let seed_demanded = std::env::var("SEED_DEMO_DATA")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
 
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("INSERT INTO _migrations (version, nom, appliquee_le) VALUES (2, '0002_seed_demo_data', ?)")
-            .bind(now)
-            .execute(pool)
+    let should_seed = seed_demanded || (cfg!(test) && !is_virgin_requested);
+
+    if should_seed {
+        let row2: Option<(i64,)> = sqlx::query_as("SELECT version FROM _migrations WHERE version = 2")
+            .fetch_optional(pool)
             .await
             .map_err(AppError::DatabaseError)?;
+
+        if row2.is_none() {
+            seed_demo_data(pool).await?;
+        }
     }
 
     // Migration 0003 (Mode de gestion & Packs)
@@ -819,4 +816,23 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), AppError> {
     Ok(())
 }
 
+pub async fn seed_demo_data(pool: &SqlitePool) -> Result<(), AppError> {
+    for statement in MIGRATION_0002.split(';') {
+        let stmt = statement.trim();
+        if !stmt.is_empty() {
+            sqlx::query(stmt)
+                .execute(pool)
+                .await
+                .map_err(AppError::DatabaseError)?;
+        }
+    }
 
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("INSERT OR IGNORE INTO _migrations (version, nom, appliquee_le) VALUES (2, '0002_seed_demo_data', ?)")
+        .bind(now)
+        .execute(pool)
+        .await
+        .map_err(AppError::DatabaseError)?;
+
+    Ok(())
+}

@@ -125,10 +125,13 @@ const INITIAL_SALES: DirectSale[] = [
   },
 ];
 
+// En mode Tauri, on démarre avec un historique vide — loadSales() charge depuis SQLite.
+const SALES_INIT = isTauri() ? [] : INITIAL_SALES;
+
 export const useCaisseStore = create<CaisseStoreState>((set, get) => ({
   cart: [],
   selectedCustomer: null,
-  salesHistory: INITIAL_SALES,
+  salesHistory: SALES_INIT,
   currentCashier: AVAILABLE_CASHIERS[0],
   initialCashFloatCents: 15000, // 15 000 DA
   activeSession: null,

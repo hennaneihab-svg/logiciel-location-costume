@@ -15,6 +15,9 @@ pub use matrix::*;
 pub mod mensurations_essais;
 pub use mensurations_essais::*;
 
+pub mod onboarding;
+pub use onboarding::*;
+
 
 // ============================================================================
 // COMMANDES IPC CRUD AVEC VALIDATION RUST
@@ -3212,16 +3215,39 @@ pub async fn get_full_dashboard_stats(
         status: r.6,
     }).collect();
 
-    // 12. Points d'évolution hebdomadaires
-    let points_evolution = vec![
-        CaEvolutionPoint { label: "Lun".to_string(), date: "2026-09-08".to_string(), ca_locations_centimes: 75000, ca_ventes_centimes: 10000, ca_total_centimes: 85000 },
-        CaEvolutionPoint { label: "Mar".to_string(), date: "2026-09-09".to_string(), ca_locations_centimes: 105000, ca_ventes_centimes: 15000, ca_total_centimes: 120000 },
-        CaEvolutionPoint { label: "Mer".to_string(), date: "2026-09-10".to_string(), ca_locations_centimes: 170000, ca_ventes_centimes: 25000, ca_total_centimes: 195000 },
-        CaEvolutionPoint { label: "Jeu".to_string(), date: "2026-09-11".to_string(), ca_locations_centimes: 140000, ca_ventes_centimes: 20000, ca_total_centimes: 160000 },
-        CaEvolutionPoint { label: "Ven".to_string(), date: "2026-09-12".to_string(), ca_locations_centimes: 280000, ca_ventes_centimes: 30000, ca_total_centimes: 310000 },
-        CaEvolutionPoint { label: "Sam".to_string(), date: "2026-09-13".to_string(), ca_locations_centimes: 380000, ca_ventes_centimes: 40000, ca_total_centimes: 420000 },
-        CaEvolutionPoint { label: "Dim".to_string(), date: "2026-09-14".to_string(), ca_locations_centimes: 160000, ca_ventes_centimes: 20000, ca_total_centimes: 180000 },
-    ];
+    // 12. Points d'évolution hebdomadaires (calculés dynamiquement sur les données réelles)
+    let mut points_evolution = Vec::new();
+    let days_labels = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
+    for i in (0..7).rev() {
+        let q_day = format!(
+            "SELECT 
+                COALESCE((SELECT SUM(montant_total_ttc_centimes) FROM locations 
+                          WHERE statut IN ('en_cours', 'retourne', 'en_retard') 
+                            AND date(created_at) = date('now', '-{} days')), 0) AS ca_loc,
+                COALESCE((SELECT SUM(montant_total_centimes) FROM ventes 
+                          WHERE statut = 'completee' 
+                            AND date(created_at) = date('now', '-{} days')), 0) AS ca_ventes,
+                date('now', '-{} days') AS d_str,
+                strftime('%w', date('now', '-{} days')) AS w_day",
+            i, i, i, i
+        );
+        let row_day: (i64, i64, String, String) = sqlx::query_as(&q_day)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(AppError::DatabaseError)?;
+        
+        let weekday_idx: usize = row_day.3.parse().unwrap_or(0);
+        let label = days_labels.get(weekday_idx).unwrap_or(&"Jour").to_string();
+        let ca_loc = row_day.0;
+        let ca_ventes = row_day.1;
+        points_evolution.push(CaEvolutionPoint {
+            label,
+            date: row_day.2,
+            ca_locations_centimes: ca_loc,
+            ca_ventes_centimes: ca_ventes,
+            ca_total_centimes: ca_loc + ca_ventes,
+        });
+    }
 
     Ok(FullDashboardStats {
         ca_periode_centimes,

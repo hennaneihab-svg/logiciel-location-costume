@@ -35,14 +35,19 @@ export const dbStorage = {
       if (typeof window === "undefined" || !window.localStorage) return defaultData;
       const raw = localStorage.getItem(key);
       if (!raw) {
-        // Enregistrer la version initiale
+        // En mode Tauri natif (production), ne JAMAIS injecter des fausses données de démo dans le stockage local
+        if (isTauri()) {
+          const emptyFallback = (Array.isArray(defaultData) ? [] : defaultData) as T;
+          return emptyFallback;
+        }
+        // En mode Web / Vitest seulement : initialiser avec defaultData
         localStorage.setItem(key, JSON.stringify(defaultData));
         return defaultData;
       }
       return JSON.parse(raw) as T;
     } catch (e) {
       console.error(`[dbStorage] Erreur lecture ${key}:`, e);
-      return defaultData;
+      return isTauri() && Array.isArray(defaultData) ? ([] as unknown as T) : defaultData;
     }
   },
 

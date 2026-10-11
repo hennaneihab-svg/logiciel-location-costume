@@ -266,16 +266,25 @@ export function calculateDashboardFromStores(
     .sort((a, b) => a.date_prevue.localeCompare(b.date_prevue))
     .slice(0, 8);
 
-  // 11. Points d'évolution hebdomadaires
-  const daysOfWeek = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
-  const points_evolution = daysOfWeek.map((day, idx) => {
-    const base = (idx + 1) * 35000 + ((idx % 3) * 20000);
+  // 11. Points d'évolution hebdomadaires (calcul réel basé sur les contrats existants)
+  const daysOfWeek = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
+  const points_evolution = Array.from({ length: 7 }).map((_, idx) => {
+    const targetDate = new Date(now.getTime() - (6 - idx) * 86400000);
+    const dateStr = targetDate.toISOString().slice(0, 10);
+    const dayLabel = daysOfWeek[targetDate.getDay()];
+
+    const dayContracts = contracts.filter((c) => {
+      const cDate = c.created_at.slice(0, 10);
+      return cDate === dateStr && (c.status === "en_cours" || c.status === "retourne" || c.status === "en_retard");
+    });
+    const ca_locations_centimes = dayContracts.reduce((sum, c) => sum + c.total_amount_cents, 0);
+
     return {
-      label: day,
-      date: `2026-09-0${idx + 8}`,
-      ca_locations_centimes: base,
-      ca_ventes_centimes: Math.round(base * 0.15),
-      ca_total_centimes: Math.round(base * 1.15),
+      label: dayLabel,
+      date: dateStr,
+      ca_locations_centimes,
+      ca_ventes_centimes: 0,
+      ca_total_centimes: ca_locations_centimes,
     };
   });
 

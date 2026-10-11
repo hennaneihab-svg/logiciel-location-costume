@@ -1,17 +1,8 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Search, X, RotateCcw, Filter } from "lucide-react";
 import { useStockStore } from "@/store/stockStore";
-
-const CATEGORIES = [
-  { id: "all", label: "Toutes Catégories" },
-  { id: "cat-01", label: "Smokings Cérémonie" },
-  { id: "cat-02", label: "Costumes 3 Pièces" },
-  { id: "cat-03", label: "Costumes 2 Pièces" },
-  { id: "cat-04", label: "Chaussures Richelieu" },
-  { id: "cat-06", label: "Accessoires Prestige" },
-];
-
-const SIZES = ["all", "48", "50", "52", "42", "43", "TU"];
+import { useSettingsStore } from "@/store/settingsStore";
+import { getCategoriesForActivity, getSizesForActivity } from "@/lib/activityCategories";
 
 const STATUSES = [
   { id: "all", label: "Tous Statuts", color: "bg-muted text-foreground" },
@@ -25,6 +16,16 @@ const STATUSES = [
 export const StockFilterBar: React.FC = () => {
   const { filters, setSearch, setCategory, setSize, setStatus, resetFilters } =
     useStockStore();
+  const boutique = useSettingsStore((s) => s.boutique);
+
+  const categories = useMemo(() => {
+    const list = getCategoriesForActivity(boutique.activity_type);
+    return [{ id: "all", label: "Toutes Catégories" }, ...list];
+  }, [boutique.activity_type]);
+
+  const sizes = useMemo(() => {
+    return getSizesForActivity(boutique.activity_type);
+  }, [boutique.activity_type]);
 
   const isFiltered =
     filters.search !== "" ||
@@ -75,7 +76,7 @@ export const StockFilterBar: React.FC = () => {
             <Filter className="w-3 h-3" />
             Catégorie :
           </span>
-          {CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <button
               key={c.id}
               onClick={() => setCategory(c.id)}
@@ -97,7 +98,7 @@ export const StockFilterBar: React.FC = () => {
           <span className="text-[11px] font-semibold text-muted-foreground mr-1">
             Taille :
           </span>
-          {SIZES.map((sz) => (
+          {sizes.map((sz) => (
             <button
               key={sz}
               onClick={() => setSize(sz)}

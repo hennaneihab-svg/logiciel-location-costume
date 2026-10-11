@@ -1,7 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRentalStore } from "@/store/rentalStore";
 import { useCaisseStore } from "@/store/caisseStore";
+import { useStockStore } from "@/store/stockStore";
+import { useClientStore } from "@/store/clientStore";
+import { useAlertStore } from "@/store/alertStore";
+import { usePackStore } from "@/store/packStore";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useAuthStore } from "@/store/authStore";
 import { isTauri, invokeCommand } from "@/services/tauri";
 
 export type AppInitStatus = "initializing" | "ready" | "error";
@@ -22,7 +27,29 @@ export function useAppInit(): AppInitState {
     setError(null);
 
     try {
+      // 0. Vérification si la base est vierge et requiert l'assistant de premier lancement
+      await useAuthStore.getState().checkSetupRequired();
+
       if (isTauri()) {
+        const isVirgin = useAuthStore.getState().isSetupRequired;
+
+        if (isVirgin) {
+          // Base vierge : nettoyer tout le localStorage pour éliminer les données démo
+          if (typeof window !== "undefined" && window.localStorage) {
+            localStorage.clear();
+          }
+          // Réinitialiser TOUS les stores en mémoire pour garantir une application 100% vierge
+          useStockStore.setState({ articles: [] });
+          useClientStore.setState({ clients: [] });
+          useAlertStore.setState({ alerts: [] });
+          useRentalStore.setState({ contracts: [], totalContracts: 0, paginatedContracts: [] });
+          useCaisseStore.setState({ salesHistory: [], cart: [] });
+          usePackStore.setState({ packs: [] });
+
+          setStatus("ready");
+          return;
+        }
+
         // 1. Chargement des paramètres depuis SQLite (avec migration one-shot si existant)
         await useSettingsStore.getState().loadSettings();
 

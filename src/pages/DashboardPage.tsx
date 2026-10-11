@@ -12,7 +12,6 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Plus,
   RefreshCw,
 } from "lucide-react";
 import { PeriodSelector } from "@/components/dashboard/PeriodSelector";
@@ -34,7 +33,6 @@ import type { DashboardPeriod, FullDashboardStats } from "@/types/dashboard";
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
-  const setCreateRentalModalOpen = useRentalStore((s) => s.setCreateRentalModalOpen);
 
   // Écoute des stores pour synchronisation temps réel
   const contracts = useRentalStore((s) => s.contracts);
@@ -116,15 +114,6 @@ export const DashboardPage: React.FC = () => {
             className="w-8 h-8 rounded-md border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-foreground" : ""}`} />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setCreateRentalModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Nouvelle Location</span>
           </button>
         </div>
       </motion.div>
